@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use these skills in your work, please cite this repository. Please also cite the underlying datasets (eICU-CRD, MIMIC-IV) per their PhysioNet requirements."
+title: "icu_analysis_skills: Claude Code skills for ML analysis of ICU EHR datasets"
+abstract: >-
+  A set of Claude Code skills describing how to identify patient cohorts, locate
+  clinical variables, and engineer time-windowed features in critical-care EHR
+  datasets (eICU-CRD, MIMIC-IV, and institutional Epic Clarity exports) for
+  machine-learning and statistical analysis.
+type: software
+authors:
+  - family-names: Raskin
+    given-names: Michel
+    # Add ORCID / affiliation if you'd like:
+    # orcid: "https://orcid.org/0000-0000-0000-0000"
+repository-code: "https://github.com/michelraskin/icu_analysis_skills"
+url: "https://github.com/michelraskin/icu_analysis_skills"
+keywords:
+  - ICU
+  - electronic health records
+  - eICU
+  - MIMIC-IV
+  - Epic Clarity
+  - machine learning
+  - feature engineering
+license: MIT
+# Update the year/version when you tag a release:
+# version: "0.1.0"
+# date-released: "2026-06-13"

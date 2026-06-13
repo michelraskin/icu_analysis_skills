@@ -1,112 +1,134 @@
 ---
 name: eicu-dataset
-description: How to identify patients and find/extract variables in the eICU Collaborative Research Database for the ttmhte/transfusionhte projects. Use when building an eICU cohort, locating an eICU clinical variable (lab, vital, treatment, diagnosis), or writing an eICU exploratory notebook. Read clinical-icu-datasets first for shared conventions.
+description: How to identify patients (cohorts) and find/extract variables in the eICU Collaborative Research Database (eICU-CRD) for machine-learning analysis. Use when building an eICU cohort, locating an eICU clinical variable (lab, vital, treatment, diagnosis, nursing chart), computing time offsets, or writing an eICU exploratory notebook. Read clinical-icu-datasets first for shared conventions.
 ---
 
-# eICU dataset
+# eICU Collaborative Research Database (eICU-CRD)
 
-Multi-center US ICU database (eICU-CRD). Flat CSV tables, one row per measurement/event,
-all keyed by **`patientunitstayid`** (one ICU stay = one patient row in `myPredictorsDf`).
-Reference notebook: `ttmhte/eICU/eICU.ipynb` (cohort + features in a single notebook).
-`transfusionhte/eICU/eICU.ipynb` is the same pattern with a trauma cohort.
+## High-level overview
 
-## Location & loading
+eICU-CRD is a multi-center US critical-care database released by Philips Healthcare and
+the MIT Laboratory for Computational Physiology (PhysioNet, credentialed access). It
+covers roughly **200,000 ICU unit stays across 200+ hospitals** that participated in the
+Philips eICU telehealth program (~2014–2015). Because it is multi-center, coding and
+available variables **vary by hospital** — expect ragged coverage.
 
-```python
-database_folder = '/projects/LCICM/eICU/'      # ttmhte (server)
-# transfusionhte: mount_s_drive(subfolder='LCICM/Databases/eICU'); '/home/idies/workspace/SAFE/'
-myHours = 60 * 6                                # 6-hour feature window
+Key design facts:
+- **Flat, denormalized CSVs.** One file per domain (patient, lab, treatment, …); no
+  module subfolders. Most variable names are stored **inline** as strings, so there is no
+  central item dictionary to look up (unlike MIMIC).
+- **Time is an integer offset in minutes** relative to **unit admission** (`time zero`).
+  Column names end in `offset` (e.g. `labresultoffset`, `nursingchartoffset`). Negative
+  offsets mean recorded before ICU admission.
+
+## ID hierarchy
+
 ```
-Small tables load directly with `pd.read_csv`. **Big tables** (`nurseCharting.csv`,
-`lab.csv`) must be read in chunks and filtered to your ids:
-
-```python
-df_chunks = []
-for chunk in pd.read_csv(database_folder+'nurseCharting.csv', chunksize=1e6):
-    df_chunks.append(chunk[chunk['patientunitstayid'].isin(myIds.patientunitstayid)])
-nurse_charting_df = pd.concat(df_chunks, ignore_index=True)
+uniquepid                 # the patient (can span multiple hospitalizations)
+└─ patienthealthsystemstayid   # one hospital stay
+   └─ patientunitstayid        # one ICU/unit stay  ← the usual analysis grain
 ```
+Most analyses are keyed on **`patientunitstayid`** (one row per ICU stay).
 
-## Key tables and the columns that matter
+## Folder / file layout
 
-| Table | Key columns | What it holds |
+A download is a single folder of CSVs (often `.csv.gz`). The tables you will use most:
+
+| File | Grain | Key columns |
 |---|---|---|
-| `patient.csv` | `gender`, `age` (string, `'> 89'`), `apacheadmissiondx`, `admissionheight`, `admissionweight`, `hospitaladmittime24`, `hospitaladmitsource`, `hospitaldischargestatus` (`'Expired'` = death) | demographics & admission |
-| `treatment.csv` | `treatmentstring` (pipe-`|`-delimited path), `treatmentoffset` | interventions incl. hypothermia |
-| `diagnosis.csv` | `diagnosisstring` (pipe path), `icd9code`, `diagnosisoffset` | diagnoses |
-| `nurseCharting.csv` ⚠ big | `nursingchartcelltypevalname` (the variable), `nursingchartvalue`, `nursingchartoffset`, `nursingchartentryoffset` | vitals, GCS, etc. |
-| `lab.csv` ⚠ big | `labname`, `labresult`, `labresultoffset` | labs |
-| `infusionDrug.csv` | `drugname` | infusions (blood products for transfusion) |
-| `intakeOutput.csv` | `cellpath`, `celllabel` | I/O incl. blood/PRBC |
+| `patient.csv` | unit stay | `patientunitstayid`, `gender`, `age` (string; `'> 89'` sentinel), `admissionheight`, `admissionweight`, `apacheadmissiondx`, `unitadmittime24`, `hospitaladmitsource`, `hospitaldischargestatus` (`'Expired'` = died), `hospitaldischargeoffset` |
+| `diagnosis.csv` | event | `diagnosisstring` (pipe-`|`-delimited hierarchy), `icd9code`, `diagnosisoffset` |
+| `treatment.csv` | event | `treatmentstring` (pipe hierarchy), `treatmentoffset` |
+| `lab.csv` ⚠ large | event | `labname`, `labresult`, `labresultoffset` |
+| `nurseCharting.csv` ⚠ large | event | `nursingchartcelltypevalname` (the variable name), `nursingchartvalue`, `nursingchartoffset`, `nursingchartentryoffset` |
+| `vitalPeriodic.csv` ⚠ large | event | high-frequency vitals (`heartrate`, `sao2`, `respiration`, `systemicsystolic`, …) as columns |
+| `vitalAperiodic.csv` | event | intermittent vitals (cuff BP, etc.) |
+| `infusionDrug.csv` | event | `drugname`, `infusionrate`, `infusionoffset` |
+| `intakeOutput.csv` | event | `cellpath`, `celllabel`, `cellvaluenumeric`, `intakeoutputoffset` |
+| `medication.csv` | event | `drugname`, `drugstartoffset` |
+| `apacheApsVar.csv` / `apachePatientResult.csv` | unit stay | APACHE severity components & predicted mortality |
+| `pastHistory.csv`, `physicalExam.csv`, `microLab.csv`, `respiratoryCharting.csv` | event | comorbidities, exam, cultures, vent settings |
 
-Note: in `patient.csv`, `age` is a string with `'> 89'` for old patients → replace with
-`89` before `astype(int)`. `bmi = admissionweight / (admissionheight/100)**2`.
-
-## Cohort identification
-
-- **Cardiac arrest (ttmhte):** `apacheadmissiondx` contains `'Cardiac arrest'`, or
-  `diagnosis.icd9code` contains `427.5`. Filter `age >= 18`. Cohort ids are persisted as
-  `patient_ids.csv` and re-used by `eICU.ipynb`.
-- **Trauma / intracranial injury (transfusionhte):** `diagnosis.icd9code` first 3 chars in
-  `{'850','851','852','853','854'}`.
-- **Transfusion exposure (transfusionhte):** `treatmentstring` contains `transfusion`; or
-  `intakeOutput.cellpath`/`celllabel` contains `blood`/`prbc` (excluding `loss`); or
-  `infusionDrug.drugname` contains `blood`/`prbc`/`platelets`/`plasma`.
-
-## Treatment / outcome definitions
-
-- **Hypothermia (treatment):** two independent signals, combined into `both_hypothermia`:
-  1. `treatment_hypothermia` — `treatmentstring` contains `'hypothermia'`.
-  2. `Hypothermia` — from `nurseCharting` Temperature (C): within first 48 h
-     (`nursingchartentryoffset < 2880`), temp `< 36`, **>12** sub-36 readings, min temp
-     `> 25`, and the sub-36 span (`max-min offset`) `> 720` min (12 h).
-- **Death:** `DeathAtDischarge = (hospitaldischargestatus == 'Expired')`.
-- **Neuro outcome `LastMGCSPositive`:** built from the Motor GCS (`Motor`) first/last
-  values within window (`FirstMGCS`/`LastMGCS`); positive when `LastMGCS == 6`.
-
-## Pipe-delimited strings → one-hot
-
-`treatmentstring` and `diagnosisstring` are hierarchical pipe paths. Expand them:
+Set the data location once and read; chunk the large tables filtered to your cohort:
 
 ```python
-def getOneHotConditions(aDf, aColumn, aPrefix):
-    aDf['conditions'] = aDf[aColumn].str.split('|')
-    one_hot = aDf['conditions'].explode().str.get_dummies().groupby(level=0).sum()
-    return aDf.drop(columns=['conditions']).join(one_hot.add_prefix(aPrefix)), one_hot.add_prefix(aPrefix)
+DATA_DIR = "/path/to/eicu/"     # configure for your environment
+window   = 6 * 60               # example 6-hour feature window
+labs = read_filtered(DATA_DIR + "lab.csv", "patientunitstayid", cohort_ids)
 ```
-Then aggregate per patient within `myHours` and binarize (`!= 0`).
+
+Demographic gotchas: `age` is a **string** with `'> 89'` for elderly patients → replace
+with `89` before `astype(int)`. BMI is not stored: `bmi = admissionweight /
+(admissionheight/100)**2`.
+
+## Identifying a cohort
+
+eICU has no single dictionary, so cohorts are built by **string/code matching** on the
+diagnosis, treatment, or admission-reason fields:
+
+```python
+# by ICD-9 code prefix (e.g. select a diagnosis family)
+dx = pd.read_csv(DATA_DIR + "diagnosis.csv")
+ids = dx[dx.icd9code.astype(str).str.startswith(("850", "851"))].patientunitstayid.unique()
+
+# by free-text in the APACHE admission diagnosis
+pat = pd.read_csv(DATA_DIR + "patient.csv")
+ids = pat[pat.apacheadmissiondx.str.contains("sepsis", case=False, na=False)].patientunitstayid
+
+# by a treatment / exposure (treatmentstring is a pipe path)
+tx = pd.read_csv(DATA_DIR + "treatment.csv")
+exposed = tx[tx.treatmentstring.str.contains("transfusion", case=False, na=False)].patientunitstayid.unique()
+
+# typical filters: age >= 18, first/qualifying unit stay only
+```
+Persist the resulting id list and reuse it to filter every event table.
+
+## Hierarchical strings → one-hot features
+
+`diagnosisstring` and `treatmentstring` are `|`-delimited hierarchical paths. Explode and
+one-hot them, then aggregate per stay within the window:
+
+```python
+def one_hot_pipe(df, col, prefix):
+    oh = df[col].str.split('|').explode().str.get_dummies().groupby(level=0).sum()
+    return df.join(oh.add_prefix(prefix)), oh.add_prefix(prefix)
+```
 
 ## Numeric feature extraction
 
-`nurseCharting` and `lab` are long tables → use the shared helpers with these arguments:
+`lab` and `nurseCharting` are long `(id, time, name, value)` tables → use the shared
+`window_features` helper with:
+
+| Table | `type_col` | `value_col` | `time_col` |
+|---|---|---|---|
+| `lab` | `labname` | `labresult` | `labresultoffset` |
+| `nurseCharting` | `nursingchartcelltypevalname` | `nursingchartvalue` | `nursingchartoffset` |
+
+Common `nursingchartcelltypevalname` values: `Temperature (C)`, `Heart Rate`,
+`O2 Saturation`, `Non-Invasive BP Systolic/Diastolic/Mean`, `GCS Total`, `Motor`,
+`Verbal`, `Eyes`, `QTc`. `vitalPeriodic` stores vitals as **columns** (not name/value), so
+aggregate those columns directly per stay.
+
+## Exploratory recipe — finding a variable (no dictionary)
+
+The distinct values of the name columns *are* the dictionary:
 
 ```python
-# nurseCharting:  typeCol='nursingchartcelltypevalname', valueCol='nursingchartvalue', timeCol='nursingchartoffset'
-# lab:            typeCol='labname',                      valueCol='labresult',        timeCol='labresultoffset'
-g,b,e,a = getFeaturesFromDf(nurse_charting_df, 'nursingchartoffset', 'nursingchartcelltypevalname', 'nursingchartvalue')
-myPredictorsDf = mergeFeaturesInDf(myPredictorsDf, b, e, a, 'nurse', 'nursingchartcelltypevalname', 'num_values')
+nc = read_filtered(DATA_DIR + "nurseCharting.csv", "patientunitstayid", cohort_ids)
+nc.nursingchartcelltypevalname.value_counts().head(50)            # what's charted
+sorted({x for x in lab.labname.unique() if 'lact' in str(x).lower()})   # fuzzy find a lab
+tx[tx.treatmentstring.str.contains("vasopress", case=False, na=False)].treatmentstring.value_counts()
+# coverage of a candidate feature across the cohort:
+nc[nc.nursingchartcelltypevalname == "Temperature (C)"].patientunitstayid.nunique()
 ```
-Produces `nurse_first_*`, `nurse_last_*`, `nurse_{max,min,mean}_*`, `lab_first_*`, etc.
+To peek without loading a whole large table, read one chunk:
+`next(pd.read_csv(path, chunksize=1_000_000))`.
 
-Common `nursingchartcelltypevalname` values: `Temperature (C)`, `GCS Total`, `Motor`,
-`Heart Rate`, `O2 Saturation`, `Non-Invasive BP Systolic/Diastolic/Mean`, `QTc`.
-GCS first/last are extracted separately (sort by offset, take min/max offset per patient).
+## Gotchas specific to eICU
 
-## Exploratory recipes — finding a variable
-
-eICU has **no dictionary table**; the "dictionary" is the distinct values of the type
-column. Load a sample (or the cohort-filtered table) and search:
-
-```python
-# what vitals/charted items exist?
-nurse_charting_df['nursingchartcelltypevalname'].value_counts().head(50)
-# fuzzy find a lab
-sorted({x for x in lab_df['labname'].unique() if 'lact' in str(x).lower()})
-# which treatments mention a keyword?
-treatment_df[treatment_df.treatmentstring.str.contains('transfus', case=False, na=False)].treatmentstring.value_counts()
-# coverage of a candidate feature across the cohort
-(nurse_charting_df[nurse_charting_df.nursingchartcelltypevalname=='Temperature (C)']
-   .patientunitstayid.nunique())
-```
-Tip: to explore without loading the whole big table, read one chunk
-(`next(pd.read_csv(path, chunksize=1e6))`) and inspect its `*name` columns.
+- Multi-center → the same concept may appear under several `labname`/`drugname` spellings;
+  search broadly and union them.
+- Temperatures are usually in **°C** here (contrast with PMAP, which is °F).
+- Offsets can be negative (pre-ICU) or implausibly large; clip to your window and sanity-
+  check ranges.
+- Use the offset columns directly — do **not** try to reconstruct wall-clock time.

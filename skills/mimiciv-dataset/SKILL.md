@@ -1,106 +1,143 @@
 ---
 name: mimiciv-dataset
-description: How to identify patients and find/extract variables in MIMIC-IV v2.2 (+ MIMIC-IV-ED) for the ttmhte/transfusionhte projects. Use when building a MIMIC cohort, finding a MIMIC itemid/ICD code or clinical variable, or writing a MIMIC exploratory notebook. Read clinical-icu-datasets first for shared conventions.
+description: How to identify patients (cohorts) and find/extract variables in MIMIC-IV (+ MIMIC-IV-ED) for machine-learning analysis. Use when building a MIMIC cohort, finding a MIMIC itemid / ICD code / clinical variable, resolving event tables through dictionaries (d_items, d_labitems, d_icd_diagnoses), computing time offsets, or writing a MIMIC exploratory notebook. Read clinical-icu-datasets first for shared conventions.
 ---
 
-# MIMIC-IV dataset
+# MIMIC-IV
 
-Single-center (BIDMC) ICU + ED database, v2.2. Unlike eICU, values live in **long event
-tables resolved through dictionaries** (`d_items`, `d_icd_diagnoses`). Three id levels:
-**`subject_id`** (patient), **`hadm_id`** (hospital admission), **`stay_id`** (ICU or ED
-stay). The predictors table is one row per `subject_id`.
-Reference notebooks (`ttmhte/mimiciv/`): cohort = `CA_ED.ipynb` + `CA_time.ipynb`;
-features = `Feature_extraction.ipynb`.
+## High-level overview
 
-## Location & module layout
+MIMIC-IV is a large, single-center critical-care database from an academic medical center
+in Boston (Beth Israel Deaconess), covering ~2008–2019, released on PhysioNet under
+credentialed access. Compared with eICU it is **deeper but narrower**: one hospital, richly
+detailed, and **relational** — measurements store a numeric id that you resolve through a
+dictionary table.
 
-```python
-database_folder = '/projects/LCICM/'
-hosp = database_folder + 'mimic-iv-2.2/hosp/'        # hospital-wide
-icu  = database_folder + 'mimic-iv-2.2/icu/'         # ICU module
-ed   = database_folder + 'mimic-iv-ed-2.2/mimic-iv-ed-2.2/ed/'   # ED (.csv.gz)
-myHours = 60 * 6
+Key design facts:
+- **Modular.** Core data splits into `hosp/` (hospital-wide EHR) and `icu/` (high-resolution
+  ICU data from the MetaVision clinical information system). Optional add-on modules ship
+  separately: **MIMIC-IV-ED** (emergency department), MIMIC-IV-Note (free text),
+  MIMIC-CXR (chest X-rays).
+- **Real timestamps, not offsets.** Times are de-identified by a per-patient random date
+  shift but remain internally consistent. You compute offsets yourself as
+  `(event_time − time_zero)`.
+- **Dictionaries.** ICU events reference `d_items`; hospital labs reference `d_labitems`;
+  diagnoses/procedures reference `d_icd_diagnoses` / `d_icd_procedures`.
+
+## ID hierarchy
+
 ```
-Big tables (`chartevents`, `diagnoses_icd`, `outputevents`, `inputevents`, `emar`,
-`procedureevents`, ED `.csv.gz`) read in chunks, filtered on `subject_id`. ED files are
-gzip: `pd.read_csv(path, compression='gzip')`.
+subject_id        # the patient
+└─ hadm_id        # one hospital admission
+   └─ stay_id     # one ICU stay (icustays)  — also one ED stay (edstays)
+```
+Analyses are keyed on `subject_id`, `hadm_id`, or `stay_id` depending on grain.
 
-## Key tables
+## Folder / module layout
+
+```
+mimic-iv/
+├─ hosp/   # hospital-wide
+└─ icu/    # ICU (MetaVision)
+mimic-iv-ed/ed/   # ED add-on (gzipped .csv.gz)
+```
 
 | Module | File | Key columns |
 |---|---|---|
-| hosp | `patients.csv` | `subject_id`, `gender` (`'M'`/`'F'`), `anchor_age` |
-| hosp | `admissions.csv` | `hadm_id`, `admittime`, `dischtime`, `admission_type` (`'ELECTIVE'`, `'SURGICAL SAME DAY ADMISSION'`…), `edregtime`, `hospital_expire_flag` (death) |
-| hosp | `diagnoses_icd.csv` ⚠ | `hadm_id`, `icd_code`, `seq_num` |
-| hosp | `d_icd_diagnoses.csv` | `icd_code`, `long_title` (ICD **dictionary**) |
-| hosp | `emar.csv` ⚠ | `medication`, `charttime` (med administrations) |
-| hosp | `omr.csv` | `result_name` (`Height (Inches)`, `Weight (Lbs)`, `BMI (kg/m2)`), `result_value`, `chartdate` |
-| icu | `icustays.csv` | `stay_id`, `intime`, `outtime` |
-| icu | `chartevents.csv` ⚠⚠ | `itemid`, `value`, `valuenum`, `charttime` (vitals/labs/GCS) |
-| icu | `d_items.csv` | `itemid`, `label`, `abbreviation`, `param_type` (**item dictionary**) |
-| icu | `outputevents.csv`, `inputevents.csv` ⚠ | `itemid`, `value`, `charttime`/`starttime` |
-| icu | `procedureevents.csv` ⚠ | `itemid`, `starttime` |
+| hosp | `patients.csv` | `subject_id`, `gender`, `anchor_age`, `anchor_year`, `dod` (date of death) |
+| hosp | `admissions.csv` | `hadm_id`, `admittime`, `dischtime`, `deathtime`, `admission_type` (`ELECTIVE`, `EW EMER.`, …), `edregtime`, `hospital_expire_flag` (in-hospital death) |
+| hosp | `diagnoses_icd.csv` ⚠ | `hadm_id`, `icd_code`, `icd_version`, `seq_num` |
+| hosp | `d_icd_diagnoses.csv` | `icd_code`, `long_title` — **ICD dictionary** |
+| hosp | `procedures_icd.csv` / `d_icd_procedures.csv` | procedures + dictionary |
+| hosp | `labevents.csv` ⚠⚠ | `itemid`, `valuenum`, `value`, `charttime` |
+| hosp | `d_labitems.csv` | `itemid`, `label`, `fluid`, `category` — **lab dictionary** |
+| hosp | `emar.csv` / `pharmacy.csv` / `prescriptions.csv` ⚠ | medication administration / orders |
+| hosp | `omr.csv` | outpatient measurements: `result_name` (`Height (Inches)`, `Weight (Lbs)`, `BMI (kg/m2)`, BP), `result_value`, `chartdate` |
+| icu | `icustays.csv` | `stay_id`, `intime`, `outtime`, `first_careunit` |
+| icu | `chartevents.csv` ⚠⚠⚠ | `itemid`, `value`, `valuenum`, `charttime` (vitals, GCS, settings) |
+| icu | `d_items.csv` | `itemid`, `label`, `abbreviation`, `category`, `param_type`, `unitname` — **ICU item dictionary** |
+| icu | `outputevents.csv`, `inputevents.csv`, `procedureevents.csv`, `datetimeevents.csv` ⚠ | I/O, infusions, procedures, dated events |
 | ed | `edstays.csv.gz` | `subject_id`, `hadm_id`, `stay_id`, `intime`, `outtime`, `disposition` |
-| ed | `triage.csv.gz` | `chiefcomplaint` |
-| ed | `diagnosis.csv.gz` | `icd_code` |
+| ed | `triage.csv.gz` | `chiefcomplaint`, vitals at triage |
+| ed | `diagnosis.csv.gz` | `icd_code`, `icd_title` |
 
-`d_items.param_type` routes feature handling: `Numeric` → numeric features;
-`Numeric with tag` → labs; `Checkbox` → binary; `Text` → categorical/one-hot.
+`d_items.param_type` tells you how to treat an ICU item: `Numeric` / `Numeric with tag`
+→ numeric features; `Checkbox` → binary; `Text` → categorical/one-hot. Read large tables
+(`chartevents`, `labevents`, `diagnoses_icd`, the event tables, ED `.csv.gz`) in chunks
+filtered on `subject_id`; ED files are gzip (`compression='gzip'`).
 
-## Cohort identification (cardiac arrest)
+## Identifying a cohort
 
-Built from **two paths, then unioned** (see shared `nameSearchCardiacArrest` /
-`icdSearchCardiacArrest`; CA ICD = ICD-10 `I46*`, ICD-9 `4275`):
+Combine any of these signals (persist the id list afterward):
 
-1. **ED chief complaint** (`CA_ED.ipynb`): `triage.chiefcomplaint` matches the CA name
-   regex → join `edstays` for `hadm_id` → keep `anchor_age >= 18`. Saved as `CA_ED.csv`.
-2. **ICD diagnosis path** (`CA_ED.ipynb`): `diagnoses_icd` ∩ CA codes from
-   `d_icd_diagnoses`, excluding `intraoperative`; require a recorded **ICU stay**,
-   **non-elective** admission (`admission_type` not in `{SURGICAL SAME DAY ADMISSION,
-   ELECTIVE}`), patient **went through ED or straight to ICU**, and CA **diagnosis also
-   seen in ED**; drop subjects with multiple qualifying admissions.
-3. **Procedure path** (`CA_time.ipynb`): `procedureevents.itemid == 225466` (the CPR /
-   cardiac-arrest procedure) gives an arrest time. Saved as `CA_time.csv`.
+```python
+hosp = DATA_DIR + "hosp/"; icu = DATA_DIR + "icu/"; ed = ED_DIR + "ed/"
 
-`Feature_extraction.ipynb` unions the ids and sets each patient's **reference `time`** =
-ED `intime` (ED path) or `max(arrest starttime, ICU intime)` (procedure path). All event
-offsets are `(charttime - time)` minutes, kept in `[0, myHours]`.
+# 1) by ICD diagnosis — search the dictionary, then the fact table
+d_icd = pd.read_csv(hosp + "d_icd_diagnoses.csv")
+codes = d_icd[d_icd.long_title.str.contains("sepsis", case=False, na=False)].icd_code
+dx = read_filtered(hosp + "diagnoses_icd.csv", "subject_id", all_ids)
+cohort = dx[dx.icd_code.isin(codes)].hadm_id.unique()
 
-## Treatment / outcome / key itemids
+# 2) by ED chief complaint (free text)
+triage = pd.read_csv(ed + "triage.csv.gz", compression="gzip")
+ed_ids = triage[triage.chiefcomplaint.str.contains("chest pain", case=False, na=False)].stay_id
 
-| Concept | How |
-|---|---|
-| **mGCS** (neuro outcome) | `chartevents.itemid == 223901` (GCS-Motor); first/last `valuenum` in window → `first_mGCS`/`last_mGCS`; `LastMGCSPositive = (last_mGCS == 6)` |
-| **Hypothermia** (treatment) | `chartevents.itemid == 225052` (temperature-management / cooling status), `value == 'On'`; longest contiguous "On" run `>= 720` min within first `1440` min |
-| **Death** | `admissions.hospital_expire_flag` |
-| **Height/Weight/BMI** | `omr.csv` latest values on/before the event date |
+# 3) by ICU procedure (itemid from d_items) e.g. an intervention time
+proc = read_filtered(icu + "procedureevents.csv", "subject_id", all_ids)
+proc_ids = proc[proc.itemid == <itemid>].hadm_id.unique()
+
+# typical filters: anchor_age >= 18; require a recorded ICU stay (icustays);
+# admission_type not in {'ELECTIVE','SURGICAL SAME DAY ADMISSION'} for emergent cohorts;
+# de-duplicate to one admission/stay per subject.
+```
+
+## Reference time and offsets
+
+Pick `time_zero` per stay (ICU `intime`, ED `intime`, or an event time), then:
+
+```python
+ev["charttime"] = pd.to_datetime(ev["charttime"], errors="coerce")
+ev = ev.merge(stays[["subject_id", "time_zero"]], on="subject_id")
+ev["offset"] = (ev["charttime"] - ev["time_zero"]).dt.total_seconds() / 60
+ev = ev[(ev.offset >= 0) & (ev.offset <= window)]
+```
 
 ## Feature extraction
 
-Merge `chartevents`/`outputevents`/`inputevents` with `d_items[['itemid','label','param_type']]`
-(lower-case + underscore the `label`), split by `param_type`, then:
-- Numeric / labs → shared `getFeaturesFromDf` + `mergeFeaturesInDf` with
-  `typeCol='label'`, `valueCol='value'`, `timeCol='chartoffset'`, prefixes `chart`/`lab`/`output`.
-- Checkbox/binary → pivot max per `(subject_id, label)` → `chart_*`.
-- Text/categorical → `MultiLabelBinarizer` (split on `;`).
-- `inputevents`, `emar` (meds) → one-hot presence per subject (`input_*`, `med_*`).
-- Other diagnoses → one-hot `dx_*` from `diagnoses_icd` ∩ non-CA `long_title`.
+Merge `chartevents` / `labevents` with their dictionary to get a `label`, lower-case +
+underscore it, then split by `param_type` / type:
+- **Numeric** (chartevents Numeric, labevents) → shared `window_features` with
+  `type_col='label'`, `value_col='valuenum'`, `time_col='offset'`; prefixes `chart` / `lab`.
+- **Checkbox / binary** → pivot max per `(subject_id, label)`.
+- **Text / categorical** → `MultiLabelBinarizer` (split multi-valued cells on `;`).
+- **Meds** (`emar`/`prescriptions`) → one-hot presence per subject (`med_*`).
+- **Other diagnoses** → one-hot `dx_*` from `diagnoses_icd` long titles.
 
-## Exploratory recipes — finding a variable
+## Exploratory recipe — finding a variable
 
-Search the **dictionaries** first (this is the main difference from eICU):
+Search the **dictionaries** first (this is the core MIMIC skill):
 
 ```python
-d_items = pd.read_csv(icu+'d_items.csv')
-# find the itemid for a charted variable
-d_items[d_items['label'].str.contains('lactate', case=False, na=False)][['itemid','label','param_type','abbreviation']]
+d_items = pd.read_csv(icu + "d_items.csv")
+d_items[d_items.label.str.contains("glasgow|gcs|motor", case=False, na=False)][
+    ["itemid", "label", "abbreviation", "param_type", "unitname"]]
 
-d_icd = pd.read_csv(hosp+'d_icd_diagnoses.csv')
-# find ICD codes / titles for a condition
-d_icd[d_icd['long_title'].str.contains('cardiac arrest', case=False, na=False)]
+d_lab = pd.read_csv(hosp + "d_labitems.csv")
+d_lab[d_lab.label.str.contains("lactate", case=False, na=False)][["itemid", "label", "fluid"]]
 ```
-Then pull only that `itemid` from `chartevents` (filter inside the chunk loop on both
-`subject_id.isin(cohort)` and `itemid == <id>`), compute offsets, and check coverage:
-`chartevents_df[chartevents_df.itemid==<id>].subject_id.nunique()`.
-For meds, search `emar.medication.value_counts()`; for procedures search `d_items` with
-`param_type` ignored (procedure items share the dictionary).
+Then pull just that `itemid` from the event table (filter inside the chunk loop on both
+`subject_id.isin(cohort)` **and** `itemid == <id>`), compute offsets, and check coverage:
+`ev[ev.itemid == <id>].subject_id.nunique()`.
+
+## Gotchas specific to MIMIC-IV
+
+- `chartevents` is enormous — always filter by `itemid` (and ids) inside the chunk loop;
+  never load it whole.
+- `value` (string) vs `valuenum` (numeric): use `valuenum` for numeric features.
+- The **same concept lives in two places**: bedside labs may appear in `chartevents`
+  (icu) *and* `labevents` (hosp) under different itemids — decide which source to trust.
+- Units come from `d_items.unitname` / `d_labitems`; the same itemid can mix units —
+  inspect before aggregating.
+- `anchor_age` is the age at `anchor_year`; ages ≥ 91 are grouped. Death can be read from
+  `hospital_expire_flag`, `admissions.deathtime`, or `patients.dod`.

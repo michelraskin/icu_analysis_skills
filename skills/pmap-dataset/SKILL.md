@@ -1,118 +1,139 @@
 ---
 name: pmap-dataset
-description: How to identify patients and find/extract variables in the ACCM PMAP (Johns Hopkins Epic Clarity) dataset for the ttmhte/transfusionhte projects. Use when building a PMAP cohort, finding a PMAP flowsheet meas_id / lab proc_id / clinical variable, or writing a PMAP exploratory notebook. Note PMAP temperatures are in Fahrenheit. Read clinical-icu-datasets first for shared conventions.
+description: How to identify patients (cohorts) and find/extract variables in PMAP-style institutional Epic Clarity EHR exports (flowsheets, labs, med administrations) for machine-learning analysis. Use when building a cohort, resolving flowsheet meas_id / lab proc_id through measure/procedure dictionaries, computing time offsets from raw timestamps, or writing an exploratory notebook on an Epic Clarity export. Note temperatures are typically in Fahrenheit. Read clinical-icu-datasets first for shared conventions.
 ---
 
-# PMAP dataset (ACCM PMAP — Johns Hopkins Epic Clarity export)
+# PMAP — institutional Epic Clarity export
 
-A local Epic Clarity export, snapshot-dated. Two id levels: **`osler_id`** (patient) and
-**`pat_enc_csn_id`** (encounter). Predictors table is one row per `osler_id`.
-Reference notebooks (`ttmhte/pmap/`): cohort = `OHCA.ipynb`; features =
-`Feature_extraction.ipynb`; temperature work = `TemperatureMeas.ipynb`.
+## High-level overview
 
-> ⚠ **Temperatures and some vitals are in Fahrenheit**, not Celsius — the hypothermia
-> thresholds are `96.8°F` (=36°C) and `77°F` (=25°C). Don't reuse the eICU/MIMIC °C logic
-> blindly.
+PMAP is a representative **institutional EHR export** drawn from **Epic Clarity/Caboodle**
+(the relational reporting layer behind the Epic electronic medical record). Unlike eICU
+and MIMIC, it is **not a public research database** — it is a raw operational export
+governed by a data-use agreement, so schemas, snapshot dates, and column names reflect the
+source institution rather than a curated standard. The patterns below generalize to most
+Epic Clarity ICU extracts.
 
-## Location & loading
+Key design facts:
+- **Snapshot-dated.** Files live under a date-stamped folder (a point-in-time extract);
+  re-pulls land in new dated folders.
+- **Two grains:** a stable **patient identifier** and an **encounter id** (Epic "CSN",
+  contact serial number). Here: `osler_id` (patient) and `pat_enc_csn_id` (encounter).
+- **Flowsheets** hold most bedside data (vitals, GCS, temps, scores). Each row is a
+  measurement with a numeric `meas_id` resolved through a **measure dictionary**.
+- **Labs** carry a `proc_id` resolved through a **procedure dictionary** (Epic `CLARITY_EAP`).
+- **Real timestamps** (not offsets) — you compute offsets relative to admission yourself.
 
-```python
-database_folder = '/projects/LCICM/ACCMPMAP/'
-snap = database_folder + '2024-08-15/'     # dated Clarity snapshot
-myHours = 60 * 6
+> ⚠ **Units follow the institution's charting**, which for Epic in the US is often
+> **Fahrenheit** for temperature and **lbs/inches** for weight/height. Confirm units in the
+> data before thresholding (e.g. 96.8 °F = 36 °C, 77 °F = 25 °C).
+
+## Folder / file layout (typical)
+
 ```
-Big tables read in chunks. Some labs need `on_bad_lines="skip"`. Flowsheet files have
-**no header** — columns are assigned manually (see below). `pip install pyarrow` is used
-for parquet in some cells.
-
-## Key tables
+<root>/
+├─ <YYYY-MM-DD>/                         # dated snapshot of Clarity tables
+│  ├─ dbo.accm_patient.csv               # patients
+│  ├─ dbo.accm_inpatient.csv             # encounters / admit-discharge
+│  ├─ dbo.accm_encounter_dx.csv          # encounter diagnoses (dx_name, ICD)
+│  ├─ dbo.accm_labs.csv                  # lab results (ord_value, proc_id)
+│  ├─ dbo.accm_med_admin.csv             # medication administrations
+│  └─ <EAP/proc dictionary>.csv          # PROC_ID -> PROC_NAME
+├─ <flowsheet folder>/
+│  ├─ Flowsheet_part*.csv                # flowsheet measurements (often headerless!)
+│  └─ d_flo_measures.csv                 # flo_meas_id -> flo_meas_name (measure dictionary)
+└─ core_icustay_*.csv                    # ICU stay windows (in_time/out_time)
+```
 
 | File | Key columns |
 |---|---|
-| `2024-08-15/dbo.accm_patient.csv` | `osler_id`, `gender` (`'Male'`), `birth_date` |
-| `2024-08-15/dbo.accm_inpatient.csv` | `pat_enc_csn_id`, `hosp_admsn_time`, `hosp_disch_time`, `admit_source_c`, `hosp_admsn_type_c` (`3.0` = elective), `ed_visit_yn` (`'Y'`), `disch_disp_c` (`20.0` = died/expired), `hospital_service`, `disch_disp_c` |
-| `core_icustay_8_15_2024.csv` | `pat_enc_csn_id`, `in_time`, `out_time`, `seq`, `icu`, `origin` (`'init'` = admitted straight to ICU) |
-| `2024-08-15/dbo.accm_encounter_dx.csv` | `dx_name`, `icd10_code`, `icd9_code`, `primary_dx_yn`, `dx_ed_yn`, `annotation` |
-| `Isalis/Isalis_Flowsheet_part1.csv`, `_part2.csv`, `Isalis_Flowsheetdata.csv` ⚠ no header | flowsheet measurements (vitals, GCS, temp) |
-| `Isalis/d_flo_measures.csv` | `flo_meas_id`→`meas_id`, `flo_meas_name`→`meas_name` (**flowsheet dictionary**) |
-| `2024-08-15/dbo.accm_labs.csv` ⚠ | `ord_value`, `proc_id`, `specimen_taken_time`, `data_type` (`'Number'`) |
-| `2024-08-15/PMAP_commons_dbo_CLARITY_EAP.csv` | `PROC_ID`→`proc_id`, `PROC_NAME`→`proc_name` (**lab/procedure dictionary**) |
-| `2024-08-15/dbo.accm_med_admin.csv` ⚠ | `generic_name`, `medication_name`, `taken_time` |
+| `accm_patient` | `osler_id`, `gender`, `birth_date` |
+| `accm_inpatient` | `pat_enc_csn_id`, `hosp_admsn_time`, `hosp_disch_time`, `admit_source_c`, `hosp_admsn_type_c`, `ed_visit_yn`, `disch_disp_c`, `hospital_service` |
+| `core_icustay` | `pat_enc_csn_id`, `in_time`, `out_time`, `seq`, `icu`, `origin` |
+| `accm_encounter_dx` | `dx_name`, `icd10_code`, `icd9_code`, `primary_dx_yn`, `dx_ed_yn`, `annotation` |
+| flowsheet | `osler_id`, `pat_enc_csn_id`, `recorded_time`, `meas_value`, `meas_id`, `meas_val_type_c` |
+| `d_flo_measures` | `flo_meas_id`→`meas_id`, `flo_meas_name`→`meas_name` (**measure dictionary**) |
+| `accm_labs` | `ord_value`, `proc_id`, `specimen_taken_time`, `data_type` |
+| proc dictionary (`CLARITY_EAP`) | `PROC_ID`→`proc_id`, `PROC_NAME`→`proc_name` (**lab/procedure dictionary**) |
+| `accm_med_admin` | `generic_name`, `medication_name`, `taken_time` |
 
-Flowsheet header (assign after reading headerless CSV):
+**Headerless flowsheets:** some exports ship flowsheet CSVs with no header row — assign
+column names after reading (read with `header=None`, then set `df.columns = [...]`). Read
+big tables in chunks; some lab files need `on_bad_lines="skip"`.
+
+Coded columns (Epic `_c` category codes) are institution-specific integers — confirm their
+meaning against a code table or by cross-tabbing. Common ones observed: `hosp_admsn_type_c`
+(admission type, e.g. elective vs emergent), `disch_disp_c` (discharge disposition, e.g. a
+specific code for expired/death), `origin` (`'init'` = admitted directly to ICU).
+
+## Identifying a cohort
+
 ```python
-chunk.columns = ['osler_id','pat_enc_csn_id','inpatient_data_id','recorded_time','meas_value',
-  'meas_comment','meas_id','meas_row_type_c','meas_val_type_c','meas_template_id','meas_fsd_id',
-  'meas_line','meas_occurance','rw_meas_id','ip_lda_id','rw_row_type_c','rw_val_type_c','meas_taken_user_id']
+SNAP = ROOT + "2024-08-15/"     # configure to your snapshot
+dx = read_filtered(SNAP + "dbo.accm_encounter_dx.csv", "osler_id", all_ids)
+
+# by diagnosis text or ICD (combine icd9 + icd10 then match)
+dx["icd"] = dx.icd9_code.fillna("") + " " + dx.icd10_code.fillna("")
+cohort = dx[dx.dx_name.str.contains("sepsis", case=False, na=False) |
+            dx.icd.str.contains(r"\bA41", case=False, na=False)].pat_enc_csn_id.unique()
+
+# typical filters: compute age from birth_date vs hosp_admsn_time and keep >= 18;
+# restrict to first ICU stay (seq == 1); use ed_visit_yn / origin for the care pathway;
+# drop patients with multiple qualifying encounters.
 ```
+Compute `age` from `birth_date` and `hosp_admsn_time`; derive outcomes from `disch_disp_c`
+(disposition) and discharge times. Persist the `osler_id` / `pat_enc_csn_id` lists.
 
-## Cohort identification (OHCA)
+## Reference time and offsets
 
-In `OHCA.ipynb`, using shared `nameSearchCardiacArrest` / `icdSearchCardiacArrest`
-(PMAP combines `icd9_code + ' ' + icd10_code` before the ICD search; CA = ICD-10 `i46.`,
-ICD-9 `427.5`):
+Time zero is usually `hosp_admsn_time` (or ICU `in_time`). Offsets in minutes:
 
-1. CA encounters: `encounter_dx.dx_name` matches CA name regex **or** ICD search; drop
-   `annotation == 'H/o cardiac arrest'`.
-2. Merge patient + inpatient; compute `age` from `birth_date` vs `hosp_admsn_time`;
-   keep `age >= 18` (cap `>100 → 89` to match eICU).
-3. Filter to first ICU stay (`seq == 1` or no ICU), **non-elective**
-   (`hosp_admsn_type_c != 3`), **through ED or straight to ICU**
-   (`ed_visit_yn == 'Y'` or `origin == 'init'`), **dx seen in ED or straight to ICU**
-   (`dx_ed_yn == 'Y'` or `origin == 'init'`); drop patients with multiple encounters.
-4. Persist ids: `ohca_osler_ids.csv`, `ohca_pat_enc_ids.csv`, `ohca.csv` (and the
-   ICU-only variants `icu_ohca_*`). `Feature_extraction.ipynb` reads these.
-
-All event offsets are `(event_time - hosp_admsn_time)` in minutes, kept in `[0, myHours]`
-and before `hosp_disch_time`.
-
-## Treatment / outcome / key flowsheet ids
-
-| Concept | How |
-|---|---|
-| **Death** | `disch_disp_c == 20.0` → `death_at_disch` |
-| **mGCS** (neuro outcome) | flowsheet `meas_id in {30405069, 160302}`; first/last numeric value in window → `first_mGCS`/`last_mGCS`; `LastMGCSPositive = (last_mGCS == 6)` |
-| **Hypothermia** (treatment, °F!) | temp flowsheet `meas_id in {6, 304301490}`, within first `1440` min; time-weighted mean temp `< 96.8°F` with min `>= 77°F` |
-| **Height / Weight** | `meas_id == 11` (height), `meas_id == 14` (weight) |
-| **Temp / BP / ED acuity** | `meas_val_type_c == 7` (temp), `== 4` (BP, split `systolic/diastolic`), `meas_id == 16054` (ED acuity) |
-
-`meas_val_type_c` routes flowsheet handling: `1` Numeric, `2` String, `4` BP (split on
-`/`), `7` Temperature, `8` Custom/multi-select (split on `;`, one-hot).
+```python
+fs["recorded_time"]   = pd.to_datetime(fs.recorded_time, errors="coerce")
+fs = fs.merge(enc[["osler_id", "hosp_admsn_time", "hosp_disch_time"]], on="osler_id")
+fs["offset"] = (fs.recorded_time - pd.to_datetime(fs.hosp_admsn_time)).dt.total_seconds() / 60
+fs = fs[(fs.offset >= 0) & (fs.offset <= window) & (fs.recorded_time <= fs.hosp_disch_time)]
+```
 
 ## Feature extraction
 
-- Join flowsheet with `d_flo_measures` on `meas_id` to get `meas_name` (lower+underscore).
-  Numeric/BP/temp/height/weight → shared `getFeaturesFromDf`/`mergeFeaturesInDf` with
-  `typeCol='meas_name'`, `valueCol='meas_value'`, `timeCol='meas_offset'`, prefix `flo`.
-- String/custom flowsheet values with ≥100 patients → one-hot (`flo_{meas_name}_{value}`).
-- Labs: join `accm_labs` with `CLARITY_EAP` on `proc_id` → `proc_name`; numeric
-  (`data_type=='Number'`) → `lab_*` features.
-- Meds: `generic_name` (fallback `medication_name`), strip parenthetical/`zzz` prefixes →
-  one-hot `med_*`.
-- Diagnoses: `dx_name` split on `;`/`-` → `MultiLabelBinarizer`; CA subtypes collapsed
-  (asystole, PEA, VF, etc.).
+- Join flowsheet to `d_flo_measures` on `meas_id` to get `meas_name`; route by
+  `meas_val_type_c` (the value-type code): numeric measures → shared `window_features`
+  (`type_col='meas_name'`, `value_col='meas_value'`, `time_col='offset'`, prefix `flo`);
+  blood-pressure measures are stored as `"sys/dia"` strings → split on `/`; multi-select /
+  custom measures → split on `;` and one-hot.
+- Labs: join `accm_labs` to the procedure dictionary on `proc_id` → `proc_name`; keep
+  numeric (`data_type == 'Number'`) → `lab_*` features.
+- Meds: normalize `generic_name` (fallback `medication_name`; strip parenthetical detail
+  and vendor `zzz` prefixes) → one-hot `med_*`.
+- Diagnoses: split `dx_name` and one-hot, collapsing synonymous variants.
 
-## Exploratory recipes — finding a variable
+## Exploratory recipe — finding a variable
 
-Search the **two dictionaries** (`d_flo_measures` for flowsheet, `CLARITY_EAP` for labs):
+Search the **two dictionaries**:
 
 ```python
-meas = pd.read_csv(database_folder+'Isalis/d_flo_measures.csv').rename(
-    columns={'flo_meas_id':'meas_id','flo_meas_name':'meas_name'})
-meas[meas['meas_name'].str.contains('glasgow|gcs|motor', case=False, na=False)]   # → meas_id
+meas = pd.read_csv(FLOW + "d_flo_measures.csv").rename(
+    columns={"flo_meas_id": "meas_id", "flo_meas_name": "meas_name"})
+meas[meas.meas_name.str.contains("glasgow|gcs|temperature", case=False, na=False)]   # -> meas_id
 
-eap = pd.read_csv(snap+'PMAP_commons_dbo_CLARITY_EAP.csv').rename(
-    columns={'PROC_ID':'proc_id','PROC_NAME':'proc_name'})
-eap[eap['proc_name'].str.contains('lactate', case=False, na=False)]               # → proc_id
+eap = pd.read_csv(SNAP + "<proc dictionary>.csv").rename(
+    columns={"PROC_ID": "proc_id", "PROC_NAME": "proc_name"})
+eap[eap.proc_name.str.contains("lactate", case=False, na=False)]                     # -> proc_id
 ```
-Then filter the big flowsheet/lab table to that id, compute offsets, and check coverage
-(`df[df.meas_id==<id>].osler_id.nunique()`). For categorical flowsheet items the
-`>=100`-patient threshold (`groupby('meas_id')['osler_id'].nunique()`) is used to drop
-rare items before one-hot.
+Then filter the flowsheet/lab table to that id, compute offsets, and check coverage
+(`df[df.meas_id == <id>].osler_id.nunique()`). For categorical flowsheet items, drop rare
+ones first (e.g. require ≥ N patients via `groupby('meas_id')['osler_id'].nunique()`).
 
-## Mapping PMAP/observational features to the HYPERION RCT
+## Gotchas specific to Epic Clarity exports
 
-`Feature_extraction.ipynb` also contains `FRENCH_CONCEPTS` (maps HYPERION `J0_*`/`BIO_*`
-codes like `LACTAT`, `CREAT`, `GLASGOW` to substring keywords) and `EXCLUDE_TERMS` (drops
-device/alarm/setting columns). Reuse these when aligning columns across datasets for a
-pooled or cross-dataset analysis.
+- **No standard vocabulary** — the same concept can appear under several `meas_id`s and
+  free-text spellings; search broadly and union.
+- **Coded `_c` columns are institution-specific integers**; never assume a code's meaning,
+  verify it.
+- **Snapshot drift**: ids and code meanings can change between dated extracts — pin the
+  snapshot you analyzed.
+- **Units are charted, not standardized** — temperature often °F, weight lbs, height
+  inches; convert explicitly.
+- **PHI**: these exports are sensitive; keep raw files out of version control and share
+  only derived, de-identified feature tables.

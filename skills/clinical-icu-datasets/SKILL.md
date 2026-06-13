@@ -1,113 +1,115 @@
 ---
 name: clinical-icu-datasets
-description: Overview and router for the cardiac-arrest / transfusion ICU research datasets (eICU, MIMIC-IV, PMAP, Hyperion) used in the ttmhte and transfusionhte projects. Use when starting any analysis on these datasets, building a cohort, locating a clinical variable, or writing an exploratory notebook. Routes to the per-dataset skills eicu-dataset, mimiciv-dataset, pmap-dataset.
+description: Overview and router for working with critical-care EHR datasets (eICU-CRD, MIMIC-IV, and institutional Epic Clarity exports such as PMAP) in machine-learning and statistical analyses. Use when starting any ICU-data analysis, defining a patient cohort, locating a clinical variable, engineering time-windowed features, or writing an exploratory notebook. Routes to the per-dataset skills eicu-dataset, mimiciv-dataset, pmap-dataset.
 ---
 
-# Clinical ICU datasets (ttmhte / transfusionhte)
+# Critical-care (ICU) EHR datasets for ML
 
-Shared knowledge for two research projects that estimate **heterogeneous treatment
-effects (HTE)** in critically ill patients across several ICU databases.
+Shared mental model and reusable workflow for analyzing intensive-care electronic health
+record (EHR) datasets. These notes are dataset-agnostic; the per-dataset skills
+(**eicu-dataset**, **mimiciv-dataset**, **pmap-dataset**) give the concrete table names,
+ID columns, dictionaries, and gotchas.
 
-## The two projects
+## What these datasets are
 
-| Repo | Path | Question | Treatment | Cohort | Primary outcomes |
-|---|---|---|---|---|---|
-| **ttmhte** | `~/Documents/GitHub/ttmhte` | Does targeted temperature management (TTM / therapeutic hypothermia) help, and for whom? | `hypothermia` (a.k.a. `Hypothermia`, `treatment_hypothermia`) | Cardiac arrest patients | `LastMGCSPositive` (neuro recovery), `death_at_disch` / `DeathAtDischarge` |
-| **transfusionhte** | `~/transfusionhte` | HTE of blood transfusion / massive transfusion | transfusion (PRBC / plasma / platelets / blood products) | Trauma — intracranial injury (ICD-9 `850`–`854`) | death, neuro |
+ICU EHR datasets are de-identified (or institutional) dumps of everything recorded during
+a critical-care stay: demographics, admission/discharge info, vital signs, laboratory
+results, medications, fluid intake/output, procedures, diagnoses (ICD), and nursing
+assessments (e.g. Glasgow Coma Scale). They are **longitudinal and irregularly sampled** —
+each clinical measurement is its own timestamped row, and different patients have wildly
+different numbers of rows. Turning them into an ML-ready matrix is most of the work.
 
-Both projects reuse the **same databases and the same code pattern**, just with a
-different cohort definition, treatment column, and outcome.
+| Dataset | Source / population | Access | Shape |
+|---|---|---|---|
+| **eICU-CRD** | ~200k ICU stays, 200+ US hospitals (Philips eICU telehealth), MIT-LCP | PhysioNet, credentialed | Flat denormalized CSVs; times are integer **offsets** (minutes from unit admission) |
+| **MIMIC-IV** | Single academic center (Boston), 2008–2019; + ED/Note/CXR add-ons | PhysioNet, credentialed | Relational `hosp`/`icu` modules; real (date-shifted) **timestamps**; values via dictionaries |
+| **PMAP / Epic Clarity export** | Institutional EHR (Epic Clarity/Caboodle) | Private / DUA | Raw Clarity tables; flowsheets + labs resolved via measure/procedure dictionaries |
 
-## The datasets (one sub-folder per database in each repo)
+## The common mental model
 
-- **eICU** — eICU Collaborative Research Database (multi-center US ICU). Wide CSV
-  tables keyed by `patientunitstayid`. → see **eicu-dataset** skill.
-- **mimiciv** — MIMIC-IV v2.2 + MIMIC-IV-ED. Keyed by `subject_id` / `hadm_id` /
-  `stay_id`; values live in long event tables resolved through dictionaries. → see **mimiciv-dataset** skill.
-- **pmap** — ACCM PMAP (Johns Hopkins Epic Clarity export). Keyed by `osler_id` /
-  `pat_enc_csn_id`; flowsheets + labs resolved through dictionaries. → see **pmap-dataset** skill.
-- **hyperion** (ttmhte only) — the French HYPERION RCT. A single pre-formatted table
-  with `J0_*` / `V0_*` / `BIO_*` columns and `CPC` outcome; no cohort building needed.
-  Mappings to the observational datasets live in the `FRENCH_CONCEPTS` dict in
-  `pmap/Feature_extraction.ipynb`.
+Despite different schemas, all three share the same structure:
 
-## The universal pipeline pattern
+1. **An ID hierarchy** — patient → hospital admission → ICU/ED stay. Pick the grain your
+   analysis lives at (usually one row per ICU stay or per admission) and key everything to it.
+2. **Event tables** — long tables of `(id, time, variable, value)`. Vitals, labs, meds,
+   I/O, charted observations all follow this shape.
+3. **Dictionaries** — most datasets store a numeric `itemid`/`meas_id`/`proc_id` in the
+   event table and the human-readable name in a separate dictionary table. Finding a
+   variable = searching the dictionary for the id, then filtering the event table by id.
+   (eICU is the exception: the variable name is stored inline.)
+4. **A reference / index time ("time zero")** — the instant features are measured relative
+   to (unit admission, ED arrival, or an event time). All event times become **offsets** =
+   `event_time − time_zero` in minutes.
 
-Every dataset follows the same two-stage flow:
+## A reusable ML workflow on ICU data
 
-1. **Cohort + feature extraction notebook(s)** build a one-row-per-patient table called
-   `myPredictorsDf` and save it to a CSV:
-   - eICU → `eICUPredictorsDiag.csv` (cohort+features in one notebook, `eICU.ipynb`)
-   - MIMIC → `MIMIC_Predictors*.csv` (cohort in `CA_ED.ipynb` + `CA_time.ipynb` → features in `Feature_extraction.ipynb`)
-   - PMAP → `PMAP_Predictors*.csv` (cohort in `OHCA.ipynb` → features in `Feature_extraction.ipynb`)
-2. **Analysis notebooks + `*Util.py`** load that CSV via `getTrainTestFunctions(...)` and
-   run the modeling (`*AnalysisDML`, `*AnalysisBART`, `*AnalysisClassif`,
-   `*AnalysisNeural`, regression, unsupervised, etc.).
+1. **Define the cohort.** Select stays by ICD diagnosis code, procedure, chief complaint
+   text, admission type, age, or any combination. Persist the selected id list so every
+   downstream step filters to the same patients.
+2. **Choose time zero and a feature window.** A common choice is the first **6 hours**
+   (`window = 6*60` minutes) after admission/index for predictors, with outcomes measured
+   later. Restrict events to `0 <= offset <= window` to avoid leaking the future.
+3. **Engineer time-windowed features** — for each numeric variable, summarize within the
+   window as `first`, `last`, `min`, `max`, `mean` (see helper below). One-hot categorical/
+   binary items (presence within window). This collapses the long event tables into one
+   row per stay.
+4. **Assemble** a single wide table (one row per id, columns = features + outcome[s] +
+   treatment/exposure), check coverage/missingness, then model.
 
-`<dataset>Util.py` / `MIMICUtil.py` / `PMAPUtil.py` all expose the same entry point:
+### Reusable helpers (copy & adapt)
+
+Read a large CSV in chunks, keeping only your cohort:
 
 ```python
-getTrainTestFunctions(aPredictedColumn='LastMGCSPositive',
-                      aTreatmentColumn='hypothermia',   # 'Hypothermia' in eICU
-                      aTestSize=0.3, aTreatmentSplit=False,
-                      aDropColumns=[], aSkipTemp=True)
-# returns (myPredictorsDf, X_train, X_test, [T_train, T_test,] y_train, y_test)
+def read_filtered(path, id_col, ids, chunksize=1_000_000, **kw):
+    parts = []
+    for chunk in pd.read_csv(path, chunksize=chunksize, **kw):
+        parts.append(chunk[chunk[id_col].isin(ids)])
+    return pd.concat(parts, ignore_index=True)
 ```
-It reads the predictors CSV, drops highly-treatment-correlated columns
-(`top_correlations.csv`, |corr|>0.7), drops rare binaries (<15 positives), drops
-temperature-derived columns when `aSkipTemp` (to avoid leaking the treatment), and
-stratifies the split on outcome × treatment.
 
-## Conventions that hold across ALL datasets
+Summarize a long event table into first/last/min/max/mean per variable, in-window:
 
-- **Time window:** `myHours = 60*6` → features use only the **first 6 hours** after the
-  reference time (admission / arrest). Hypothermia detection uses 24 h (`1440`) or 48 h
-  (`2880`) windows.
-- **Offsets** are minutes from the reference time. In eICU they're columns in the data
-  (`*offset`); in MIMIC/PMAP you compute them: `(event_time - reference_time)` in minutes,
-  then keep `0 <= offset <= myHours`.
-- **Feature column naming:** `{prefix}_{first|last|max|min|mean}_{variable}`.
-  Prefixes: `nurse`, `lab`, `chart`, `output`, `input`, `med`, `flo`, `dx`, `diagnosis`,
-  `treatment`. `first`/`last` = earliest/latest value in the window; `max`/`min`/`mean`
-  = aggregates.
-- **Two shared helper functions** appear in every feature-extraction notebook:
-  - `getFeaturesFromDf(df, timeCol, typeCol, valueCol)` → `(group, begin, end, agg)`
-  - `mergeFeaturesInDf(predictorsDf, begin, end, agg, prefix, typeCol, valueCol)` → wide df
-  Copy these from any existing `Feature_extraction.ipynb` rather than rewriting them.
-- **Cardiac-arrest identification** uses two shared regex functions,
-  `nameSearchCardiacArrest(text)` (matches cardiac/cardio/circulatory arrest, asystole,
-  PEA, post-arrest; excludes history/neonatal/respiratory) and
-  `icdSearchCardiacArrest(text)` (ICD-10 `I46*`, ICD-9 `4275`/`427.5`). They are
-  duplicated in CA_ED.ipynb, CA_time.ipynb, OHCA.ipynb — reuse verbatim for consistency.
-- **mGCS outcome:** the neuro outcome is the *motor* component of GCS. `LastMGCSPositive`
-  = (`last_mGCS` == 6). Patients who died are forced to `last_mGCS = 1`. Rows where first
-  and last mGCS times are equal (single measurement) are filtered out.
+```python
+def window_features(df, id_col, time_col, type_col, value_col, window):
+    d = df[(df[time_col] >= 0) & (df[time_col] <= window)].copy()
+    d['_v'] = pd.to_numeric(d[value_col], errors='coerce')
+    g = d.groupby([id_col, type_col])
+    first = d.loc[g[time_col].idxmin()][[id_col, type_col, '_v']]
+    last  = d.loc[g[time_col].idxmax()][[id_col, type_col, '_v']]
+    agg   = g['_v'].agg(['min', 'max', 'mean']).reset_index()
+    # pivot each to wide, prefix the columns, and join on id_col -> one row per id
+    return first, last, agg
+```
 
-## Where the data lives
+Suggested column naming: `{source}_{first|last|min|max|mean}_{variable}` (e.g.
+`lab_min_lactate`, `vital_first_heart_rate`). Keep it consistent so downstream feature
+selection can pattern-match.
 
-- ttmhte (current, server): `database_folder = '/projects/LCICM/'`
-  (eICU under `/projects/LCICM/eICU/`, MIMIC under `/projects/LCICM/mimic-iv-2.2/` and
-  `/projects/LCICM/mimic-iv-ed-2.2/`, PMAP under `/projects/LCICM/ACCMPMAP/`).
-- transfusionhte (older, SciServer): mounted via
-  `from mount_drive import mount_s_drive; mount_s_drive(subfolder='LCICM/Databases/eICU')`
-  to `/home/idies/workspace/SAFE/`. Original network share is `S:\LCICM\Databases`.
-- Raw clinical CSVs are **not in the repos** (git-ignored, PHI). Notebooks read from the
-  mounted data folder; only derived `*Predictors*.csv` / cohort id files are produced.
+## Exploratory recipe — finding a variable
 
-## Writing a new exploratory notebook (general recipe)
+1. Load the dataset's **dictionary** (or, for eICU, the distinct values of the variable
+   column).
+2. Fuzzy-search it: `dict[dict.label.str.contains('lactate', case=False, na=False)]` →
+   note the id / exact label string.
+3. Pull just that variable from the (cohort-filtered) event table, compute offsets,
+   restrict to the window.
+4. **Check it's usable before committing:** `s.notna().mean()` (fraction of stays with the
+   value) and `s.nunique()` (constant columns are useless). Look at the distribution and
+   units.
 
-1. `import pandas as pd, numpy as np, re, math`; set `myHours = 60*6` and `database_folder`.
-2. Load the dictionary table for the dataset (eICU: distinct values of the type column;
-   MIMIC: `d_items` / `d_icd_diagnoses`; PMAP: `d_flo_measures` / `CLARITY_EAP`).
-3. **Find a variable** by fuzzy search on the dictionary/label, e.g.
-   `dict_df[dict_df['label'].str.contains('lactate', case=False, na=False)]` — note the
-   id (`itemid` / `meas_id` / `proc_id`) or the exact label string.
-4. Read big tables in chunks filtered to your cohort ids (`read_by_chunks` pattern), keep
-   only the columns you need, compute offsets, restrict to the time window.
-5. Inspect coverage before committing a feature:
-   `series.notna().mean()` (fraction of patients with the value) and `series.nunique()`.
-6. Add the variable to the feature-extraction step using `getFeaturesFromDf` /
-   `mergeFeaturesInDf` (numeric) or one-hot encoding (categorical/binary).
+## Cross-cutting pitfalls
 
-See the per-dataset skills for the exact table names, id columns, key item ids, and
-copy-paste search snippets.
+- **Units differ** across and within datasets (°C vs °F, lbs vs kg, mg/dL vs mmol/L).
+  Always confirm units before combining or thresholding.
+- **Time representation differs**: eICU gives offsets directly; MIMIC/PMAP give timestamps
+  you must subtract. Negative offsets = recorded before time zero — usually drop them.
+- **Granularity / leakage**: don't let post-outcome or treatment-defining measurements
+  into the feature window, and de-duplicate to one row per chosen grain.
+- **Missingness is informative but heavy**: many variables are present for <5% of stays.
+  Filter by coverage and decide imputation deliberately.
+- **De-identification artifacts**: shifted dates, ages capped (e.g. eICU `'> 89'`,
+  MIMIC anchor-age binning). Handle the sentinel strings before casting to numeric.
+
+See the per-dataset skills for concrete schemas, dictionaries, ID columns, and example
+cohort/variable lookups.

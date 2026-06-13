@@ -70,6 +70,16 @@ demographics*; status & LOS in *Admission / discharge / length of stay*).
 rows by offset within the cohort, take the min-offset (first) and max-offset (last) value per
 stay. A "good" motor outcome is often `last motor GCS == 6`.
 
+**Defining "comatose" (e.g. for a post-arrest cohort).** Coma is conventionally **GCS total
+≤ 8** (or motor GCS ≤ 4 / not following commands). Two cautions when using GCS as a coma
+*signal* rather than just a feature: (1) **sedation confounds it** — a low GCS while the
+patient is on propofol/midazolam/dexmedetomidine/fentanyl (see *Organ support → Sedation*) is
+sedation, not neurologic coma; prefer an off-sedation assessment, or take the **worst (min)
+GCS in a window** and note sedation exposure rather than a single sedated reading. (2) Clean
+the eICU `'Unable to score'`/non-numeric GCS strings before thresholding. Pair this with a
+cardiac-arrest signal (diagnosis/text) and a sensible time anchor — see the post-arrest
+timing note in **clinical-icu-datasets**.
+
 ## Vital signs
 
 | Variable | eICU | MIMIC-IV | PMAP |

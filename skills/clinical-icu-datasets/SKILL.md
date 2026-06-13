@@ -149,6 +149,13 @@ nearly every analysis.
   things derived from it) as a predictor of the outcome.
 - **De-identification artifacts**: age sentinels (eICU `'> 89'`), binned ages (MIMIC
   `anchor_age`), shifted dates — clean before filtering on them.
+- **Post-arrest / post-event cohorts have no clean event timestamp.** Neither eICU nor
+  MIMIC records a ROSC (return-of-circulation) time, so "after cardiac arrest" has no exact
+  time zero. Anchor on a proxy — the **post-arrest ICU admission** (`intime` / unit-admit
+  offset 0), or the offset of the arrest event/diagnosis if charted — and state the choice.
+  Measure post-event status (e.g. coma) in a window *after* that anchor, and beware that
+  early readings overlap sedation/peri-arrest instability (see the coma-definition note in
+  **icu-feature-identification**).
 
 See the per-dataset skills for the exact tables, code columns, dictionaries, and
 copy-paste identification snippets.

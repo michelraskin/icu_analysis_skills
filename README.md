@@ -1,10 +1,10 @@
 # icu_analysis_skills
 
-Claude Code [skills](https://docs.claude.com/en/docs/claude-code/skills) for **machine-
-learning and statistical analysis on critical-care (ICU) EHR datasets**. They capture how
-to identify patient cohorts, locate clinical variables, and engineer time-windowed
-features in the major ICU databases, so an assistant can pick up dataset structure and the
-exploratory workflow without re-deriving them each time.
+Claude Code [skills](https://docs.claude.com/en/docs/claude-code/skills) for analysis on
+critical-care (ICU) EHR datasets, focused on **patient (cohort) identification** and
+**feature identification**. They give a fresh Claude session enough context to understand a
+dataset, identify a new cohort of patients via a notebook, run an initial descriptive
+analysis, and locate the variables an analysis needs — without re-deriving any of it.
 
 The skills are dataset-focused and analysis-agnostic — useful for any predictive modeling,
 causal inference, phenotyping, or descriptive study built on these data.
@@ -13,13 +13,15 @@ causal inference, phenotyping, or descriptive study built on these data.
 
 | Skill | Use it when |
 |---|---|
-| **clinical-icu-datasets** | Starting any ICU-data analysis. Overview of the datasets, the shared event-table/dictionary/index-time mental model, a reusable cohort → time-windowed-feature → matrix workflow, naming conventions, and exploration recipes. Routes to the per-dataset skills. |
-| **eicu-dataset** | Building an eICU-CRD cohort or finding/extracting a variable (flat CSVs keyed by `patientunitstayid`, inline variable names, integer time offsets). |
-| **mimiciv-dataset** | Building a MIMIC-IV (+ ED) cohort or finding an `itemid` / ICD code (relational `hosp`/`icu` modules, real timestamps, `d_items`/`d_labitems`/`d_icd_diagnoses` dictionaries). |
-| **pmap-dataset** | Building a cohort or finding a flowsheet `meas_id` / lab `proc_id` in a PMAP-style institutional **Epic Clarity** export (measure/procedure dictionaries; units often Fahrenheit). |
+| **clinical-icu-datasets** | Starting any ICU-data analysis. Overview of the datasets, the event-table/dictionary/index-time mental model, the patient-identification recipe and signal taxonomy, and a bundled **cohort-identification notebook template** (`cohort_identification_template.py`) + initial-analysis playbook. Routes to the others. |
+| **eicu-dataset** | Identifying an eICU-CRD cohort — where each signal lives (inline name strings, ICD-9, no dictionary) and how to match it. Keyed by `patientunitstayid`; integer time offsets. |
+| **mimiciv-dataset** | Identifying a MIMIC-IV (+ ED) cohort — resolving signals through `d_items`/`d_labitems`/`d_icd_diagnoses` (relational `hosp`/`icu` modules; ICD-9 **and** ICD-10; real timestamps). |
+| **pmap-dataset** | Identifying a cohort in a PMAP-style institutional **Epic Clarity** export (flowsheet `meas_id` / lab `proc_id` dictionaries; units often Fahrenheit). |
+| **icu-feature-identification** | Locating/extracting a specific variable across all three datasets — GCS & motor GCS (mGCS), discharge status/mortality, ICU & hospital length of stay, demographics, weight/height/BMI, vitals, labs, ventilation, vasopressors, sedation, urine output, severity scores, comorbidities. Includes the default "baseline covariates" block. |
 
 Each skill is a directory under `skills/` containing a `SKILL.md` with YAML frontmatter
-(`name`, `description`). Claude auto-loads the relevant one based on the `description`.
+(`name`, `description`); some bundle helper files. Claude auto-loads the relevant one based
+on the `description`.
 
 ## Install (symlink into your Claude skills dir)
 
@@ -42,7 +44,7 @@ CLAUDE_SKILLS_DIR=/path/to/project/.claude/skills ./install.sh
 ```
 
 To uninstall, remove the symlinks:
-`rm ~/.claude/skills/{clinical-icu-datasets,eicu-dataset,mimiciv-dataset,pmap-dataset}`.
+`rm ~/.claude/skills/{clinical-icu-datasets,eicu-dataset,mimiciv-dataset,pmap-dataset,icu-feature-identification}`.
 
 ## Updating the skills
 

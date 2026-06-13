@@ -31,7 +31,7 @@ matched with a case-insensitive substring/regex.
 | Procedure / intervention | `treatment.csv` → `treatmentstring` | pipe hierarchy |
 | Medication | `medication.csv` / `infusionDrug.csv` → `drugname` | infusionDrug also has `drugrate` |
 | Fluid / blood / device (I/O) | `intakeOutput.csv` → `cellpath`, `celllabel` | `cellvaluenumeric` has volumes |
-| Respiratory support / ventilation | `respiratoryCare.csv` (`ventstartoffset`/`ventendoffset`), `respiratoryCharting.csv` | no single flag — union these |
+| Respiratory support / ventilation | `respiratoryCare.csv` (`ventstartoffset`/`ventendoffset`, `airwaytype`), `respiratoryCharting.csv` (`respchartvaluelabel`), `treatment.csv` string, `apacheApsVar.csv` (`intubated`/`vent` day-1 flags) | no single flag — union these |
 | Lab value | `lab.csv` ⚠ → `labname` + `labresult` | for threshold cohorts |
 | Vital / score | `nurseCharting.csv` ⚠ → `nursingchartcelltypevalname` + `nursingchartvalue` | also `vitalPeriodic.csv` (vitals as columns) |
 | Comorbidity / history | `pastHistory.csv` → `pasthistorypath` | pre-existing conditions |
@@ -95,7 +95,10 @@ Peek at a large table without loading it whole: `next(pd.read_csv(path, chunksiz
 - `icd9code` can be a comma-separated list — split and take the first for prefix matching.
 - Multi-center spelling variation — the same concept appears under several names; search
   broadly and union.
-- Offsets can be negative (pre-ICU) — usually require `offset >= 0`.
+- Offsets can be negative (pre-ICU) — usually require `offset >= 0`. **Some offset columns
+  use `0` as a "not recorded" sentinel** (notably `respiratoryCare.ventstartoffset`): to
+  detect a real vent episode keep `ventstartoffset > 0` (a 0 means unfilled, not "started at
+  admit"), or fall back to `airwaytype` (artificial-airway present ⇒ invasive ventilation).
 
 ## Next: building the analysis dataset (brief)
 

@@ -94,7 +94,7 @@ excess, bicarbonate, troponin, albumin.
 
 | Variable | eICU | MIMIC-IV | PMAP |
 |---|---|---|---|
-| Mechanical ventilation | `respiratoryCare` (`ventstartoffset`/`ventendoffset`), `respiratoryCharting`; `treatment` string | `procedureevents` invasive vent ≈225792 / NI ≈225794; chartevents vent mode | flowsheet measures (search "ventilator"/"vent mode"/"o2 device") |
+| Mechanical ventilation | `respiratoryCare` (`ventstartoffset`>0 /`ventendoffset`, `airwaytype`), `respiratoryCharting` (`respchartvaluelabel`); `treatment` string; `apacheApsVar.intubated`/`vent` (day-1 cross-check) — union, no single flag | `procedureevents` invasive vent ≈225792 / NI ≈225794; chartevents vent mode | flowsheet measures (search "ventilator"/"vent mode"/"o2 device") |
 | PEEP / FiO2 | `respiratoryCharting` (`respchartvaluelabel` "peep"/"fio2") | chartevents PEEP≈220339, FiO2≈223835 | flowsheet (search "peep"/"fio2") |
 | Vasopressors | `infusionDrug.drugname` (norepinephrine/epinephrine/dopamine/dobutamine/vasopressin/phenylephrine) | `inputevents` via `d_items` vasopressor labels | `accm_med_admin.generic_name` |
 | Sedation / analgesia | `infusionDrug`/`medication` `drugname` (propofol/midazolam/dexmedetomidine/fentanyl/ketamine) | `inputevents` via `d_items`; `prescriptions.drug` | `accm_med_admin.generic_name` |

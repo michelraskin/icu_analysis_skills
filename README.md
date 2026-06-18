@@ -18,6 +18,7 @@ causal inference, phenotyping, or descriptive study built on these data.
 | **mimiciv-dataset** | Identifying a MIMIC-IV (+ ED) cohort — resolving signals through `d_items`/`d_labitems`/`d_icd_diagnoses` (relational `hosp`/`icu` modules; ICD-9 **and** ICD-10; real timestamps). |
 | **pmap-dataset** | Identifying a cohort in a PMAP-style institutional **Epic Clarity** export (flowsheet `meas_id` / lab `proc_id` dictionaries; units often Fahrenheit). |
 | **icu-feature-identification** | Locating/extracting a specific variable across all three datasets — GCS & motor GCS (mGCS), discharge status/mortality, ICU & hospital length of stay, demographics, weight/height/BMI, vitals, labs, ventilation, vasopressors, sedation, urine output, severity scores, comorbidities. Includes the default "baseline covariates" block. |
+| **lcicm-cluster** | Operating context for the LCICM lab cluster — on-disk paths for the eICU / MIMIC-IV / PMAP CSVs under `/projects/LCICM/`, file format & chunked-read conventions, how to run the notebooks, and the shared per-dataset repo layout. The operational layer beneath the scientific dataset skills. |
 
 Each skill is a directory under `skills/` containing a `SKILL.md` with YAML frontmatter
 (`name`, `description`); some bundle helper files. Claude auto-loads the relevant one based

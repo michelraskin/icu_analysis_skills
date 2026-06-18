@@ -1,6 +1,6 @@
 ---
 name: pmap-dataset
-description: How to identify any patient cohort in PMAP-style institutional Epic Clarity EHR exports — where each kind of signal (diagnosis, encounter attributes, medication, device, flowsheet measure, lab) lives and how to match it, resolving flowsheet meas_id / lab proc_id through dictionaries. Use when building or filtering a cohort or writing a patient-identification notebook on an Epic Clarity export. Read clinical-icu-datasets first. Feature extraction is covered briefly at the end.
+description: How to identify any patient cohort in PMAP-style institutional Epic Clarity EHR exports — where each kind of signal (diagnosis, encounter attributes, medication, device, flowsheet measure, lab) lives and how to match it, resolving flowsheet meas_id / lab proc_id through dictionaries. Use when building or filtering a cohort or writing a patient-identification notebook on an Epic Clarity export. Read clinical-icu-datasets first. Feature extraction is covered briefly at the end. The authoritative ACCM `accm_projection` column-level data catalog lives in reference/accm-pmap-data-catalog.md.
 ---
 
 # PMAP — patient identification (Epic Clarity export)
@@ -16,6 +16,11 @@ Bedside data lives in **flowsheets** (numeric `meas_id` → measure dictionary);
 `proc_id` (→ procedure dictionary, Epic `CLARITY_EAP`). **Real timestamps**.
 
 > ⚠ Units follow institutional charting — temperature often **Fahrenheit**, weight lbs.
+
+> 📖 **Authoritative catalog:** `reference/accm-pmap-data-catalog.md` is the canonical
+> ACCM `accm_projection` data dictionary (table list, every column, coded `_c` value
+> meanings, ICD/code reference tables, inclusion criteria, update cadence). Consult it
+> to confirm an exact table/column name or a code's meaning before assuming.
 
 ## Where each signal lives (the identification map)
 

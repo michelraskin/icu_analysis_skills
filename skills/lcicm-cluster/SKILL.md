@@ -64,6 +64,21 @@ Generating notebooks programmatically: build the `.ipynb` with a small `_build_n
 - **causal_sedation** — Dynamic Causal Model of ICU sedation (Aim 1 IDA); cohort = adult,
   invasively ventilated, continuously sedated. Started on eICU.
 
+## Standard modeling allocation
+
+On `gpu110`, modeling jobs should request 32 total CPU threads and all four Tesla T4 GPUs when the
+workload has independent GPU-capable fits. Record the resolved allocation in the parameter
+manifest. One LightGBM fit uses one GPU, so distribute folds, horizons, outcomes, or model fits
+across devices 0–3 using at most four processes and eight CPU threads per concurrent worker.
+CPU-only stages may use all 32 BLAS/OpenMP threads. Do not exceed 32 aggregate CPU threads or
+silently fall back to CPU/fewer GPUs; fail clearly and document an approved reduced allocation.
+
+On `gpu110`, `nvidia-smi` reports four Tesla T4 GPUs (16 GiB each), NVIDIA driver `570.124.06`,
+and CUDA driver compatibility `12.8`. T4 compute capability is `7.5`; do not describe that as the
+installed CUDA version. Use only scheduler-granted devices and record the resolved
+`CUDA_VISIBLE_DEVICES`. Request all four for parallelizable work; if fewer are granted, stop or use
+an explicitly approved reduced allocation rather than assuming every visible node GPU is usable.
+
 ## Source of truth / install
 
 These skills live in `~/Documents/GitHub/icu_analysis_skills/skills/`, symlinked into

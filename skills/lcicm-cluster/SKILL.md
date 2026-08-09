@@ -41,11 +41,80 @@ read = lambda f, **k: pd.read_csv(path(f), **k)
   relative to the notebook). Don't expect to execute them locally.
 - Headless figures: `import matplotlib; matplotlib.use("Agg")` if running via nbconvert.
 
-Run a notebook on the cluster:
+Run a notebook on the cluster — **interactively** (fine for short, exploratory runs):
 ```bash
 jupyter nbconvert --to notebook --execute <nb>.ipynb \
   --output <nb>.ipynb --ExecutePreprocessor.timeout=-1
 ```
+For anything long, reproducible, or parallel, submit it as a **batch job** instead — see the
+next section. Interactive runs have a specific hazard documented there (git operations
+mid-run).
+
+## Running notebooks as SLURM batch jobs (Discovery HPC / Open OnDemand)
+
+The cluster runs **SLURM**, reachable from the OnDemand Job Composer (`Jobs → Job Composer`,
+scripts under `~/ondemand/data/sys/myjobs/projects/`) or `sbatch` on a login node
+(`rithpc-login02.cm.cluster`). Prefer batch for any run that is long, must be reproducible,
+or can run alongside another.
+
+**Why batch, beyond wall-clock:**
+- **Provenance.** Stamp the git SHA, hostname, resolved allocation and package versions into
+  a `run_manifest.txt` per run. Without this you *will* eventually analyse a stale output and
+  not notice — the failure mode is silent, and re-deriving which code produced a zip costs
+  more than the discipline does.
+- **Parallelism.** Independent notebooks become independent jobs instead of serial cells in
+  one kernel.
+- **Unattended long runs** (dataset rebuilds, large sweeps).
+
+**Site-specific SLURM facts (verified Aug 2026):**
+
+| Setting | Value |
+|---|---|
+| Partitions | `cpu`, `gpu` |
+| Account | `--account=LCICM` — **required**, jobs are rejected without it |
+| Memory flag | `--mem-per-cpu=<MB>` — **per core, not total**; `--mem` is not the local convention |
+| GPUs | `--gres=gpu:N` (plain count, no device-type token) |
+| Max walltime | 72 h |
+| Python | `module load python311` |
+
+**Gotchas that cost real time:**
+- **`#SBATCH` vs `##SBATCH`.** A doubled hash is a comment SLURM ignores. Commenting out
+  `--gres` this way yields a job with zero GPUs that runs happily on CPU — you find out from
+  the runtime, not an error.
+- **The `--output`/`--error` directory must already exist.** SLURM opens those files *before*
+  the script body runs, so a `mkdir -p` inside the script is too late; the job dies instantly
+  with nothing written to explain why.
+- **`#SBATCH` directives cannot reference shell variables** — they are parsed before any
+  expansion. Paths in them are fixed. Conversely, **`sbatch` CLI flags override `#SBATCH`
+  directives**, so one parameterized script can serve every job without editing the header.
+- **`--mem-per-cpu` multiplies.** 40 cores × 1000 MB is 39 GB, not 1 GB — and 39 GB will OOM a
+  large decision-table job hours in.
+
+**Job-script pattern** (reference implementation: `causal_sedation/jobs/run_aim2_notebook.sh`):
+1. Take the notebook stem and input directories as env vars (`--export=ALL,NOTEBOOK=…`).
+2. `mkdir` a run directory keyed `{notebook}_{UTC}_{jobid}` so runs never overwrite.
+3. **Copy the notebook and any repo-local shared module (`aim2_shared.py`, `*Util.py`) into
+   the run dir and `cd` there.** This is what insulates a running job from git operations in
+   the repo — see the hazard below.
+4. Symlink declared input directories, and **fail fast if one is missing** rather than letting
+   the notebook silently produce `unknown`/empty results.
+5. Write `run_manifest.txt` (git SHA + dirty count, host, `SLURM_CPUS_PER_TASK`,
+   `SLURM_MEM_PER_CPU`, gres, `CUDA_VISIBLE_DEVICES`, `nvidia-smi`, package versions, every
+   analysis env override).
+6. Execute with `jupyter nbconvert --to notebook --execute --inplace
+   --ExecutePreprocessor.timeout=-1`. **Do not pass `--allow-errors`** — a failed cell must
+   kill the job rather than leave a half-executed notebook that looks like a result.
+
+**⚠ Never `git pull`/`rebase` in a tree an interactive notebook is running from.** Grouped-OOF
+helpers use joblib **Loky, which spawns**; each new fold worker re-imports the shared module
+*from disk*. Changing that file mid-run means early folds ran under one version of the code and
+later folds under another, with no error raised. Either run via the job script (which works off
+copies), or use a `git worktree` for edits while the running tree stays pinned:
+```bash
+git -C <repo> worktree add ../<repo>_dev -b wip   # edit here; the running tree never moves
+```
+
+Add the run-output root (e.g. `mimiciv/runs/`) to `.gitignore` before the first submit.
 
 ## Repo layout shared across the lab's analyses
 

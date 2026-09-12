@@ -1,0 +1,4 @@
+interface:
+  display_name: "Iteration Framework"
+  short_description: "Specify, build, run, review, record — and keep the handoff current"
+  default_prompt: "Use $iteration-framework to run this work cycle and update the handoff and status docs."

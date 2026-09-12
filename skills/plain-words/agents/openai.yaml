@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plain Words"
+  short_description: "Plain-words replies and simple narrative docs"
+  default_prompt: "Use $plain-words for this reply and for any Markdown it produces."

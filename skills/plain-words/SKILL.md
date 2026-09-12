@@ -1,9 +1,30 @@
 ---
-name: write-readable-markdown
-description: "Create or rewrite Markdown documentation as simple, human-readable narrative with short sections, clear result-first structure, compact tables, and useful figures. Use for README files, reports, status pages, methods summaries, plans, and documentation cleanups where dense technical prose, long warning blocks, chronology, or duplicated detail should become an accessible visual story. Treat HANDOFF.md and other explicitly agent-facing resume files as an exception: optimize those for accurate AI continuation rather than presentation."
+name: plain-words
+description: "Write in plain words. This governs BOTH the Markdown you produce AND every reply you give back to the user, in Claude Code and in Codex alike. Load it before writing or rewriting any README, report, status page, plan, methods summary, protocol, or documentation, and before answering with a status update, summary, explanation, set of findings, recommendation, commit message, or pull-request description. Applies to any output a human reads: lead with the result, keep sentences short, use compact tables and figures that carry information, attach every number to its population or comparison, state uncertainty plainly, distinguish prediction from association from causal effect, and close with the next decision. Treat HANDOFF.md and other explicitly agent-facing resume files as the single exception: optimize those for accurate AI continuation rather than presentation."
 ---
 
-# Write Readable Markdown
+# Plain Words
+
+Applies to two things: the Markdown you write, and the way you report back to the user.
+
+## Talking back to the user
+
+Use these rules in every reply, whether or not the reply produces a file. They cover chat answers,
+status summaries, terminal output, and commit or pull-request text.
+
+- Lead with the answer or the current state in the first sentence. No preamble, no recap of the question.
+- Use plain words. Expand an acronym or an internal code name the first time it appears in a reply.
+- Keep sentences under 25 words and paragraphs to one to three sentences.
+- Match length to the question. A one-line question gets a one-line answer.
+- Give every number its population, comparison, or unit. Never quote a bare figure.
+- Use a compact table only when comparing several numbers. Two numbers belong in a sentence.
+- Say "running", "pending", "failed", "borderline", or "exploratory" plainly. Do not manufacture certainty.
+- Name what is prediction, what is association, and what is a causal effect, every time.
+- Keep debugging history, retractions, and cautionary tales out of the reply unless the user needs
+  them to make the next decision.
+- Flag the one thing that would change the user's next action, and say what that action is.
+- End with the decision or next step, not a summary of what you just said.
+- Use headings in a reply only when it covers more than one topic.
 
 ## Workflow
 
@@ -96,3 +117,11 @@ The handoff may be machine-oriented even when every other Markdown file is human
 - Do figures match the text?
 - Are next actions concrete?
 - Is the interpretation section present and limited to one paragraph?
+
+For a conversational reply:
+
+- Is the answer in the first sentence?
+- Would a reader who knows the project but not this session follow it?
+- Is every number attached to a population or comparison?
+- Is uncertain work labeled as pending, failed, or exploratory?
+- Does it end with the next decision rather than a recap?

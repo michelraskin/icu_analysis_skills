@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cluster Jobs"
+  short_description: "Submit, monitor and collect SLURM notebook jobs"
+  default_prompt: "Use $cluster-jobs to submit this notebook as a batch job and tell me how to read the run."

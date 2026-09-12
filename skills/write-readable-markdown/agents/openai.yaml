@@ -1,4 +1,0 @@
-interface:
-  display_name: "Readable Markdown"
-  short_description: "Simple narrative docs with clear figures"
-  default_prompt: "Use $write-readable-markdown to rewrite these Markdown documents as concise, visual, human-readable narratives."

@@ -19,17 +19,19 @@ causal inference, phenotyping, or descriptive study built on these data.
 | **pmap-dataset** | Identifying a cohort in a PMAP-style institutional **Epic Clarity** export (flowsheet `meas_id` / lab `proc_id` dictionaries; units often Fahrenheit). |
 | **icu-feature-identification** | Locating/extracting a specific variable across all three datasets — GCS & motor GCS (mGCS), discharge status/mortality, ICU & hospital length of stay, demographics, weight/height/BMI, vitals, labs, ventilation, vasopressors, sedation, urine output, severity scores, comorbidities. Includes the default "baseline covariates" block. |
 | **lcicm-cluster** | Operating context for the LCICM lab cluster — on-disk paths for the eICU / MIMIC-IV / PMAP CSVs under `/projects/LCICM/`, file format & chunked-read conventions, how to run the notebooks, and the shared per-dataset repo layout. The operational layer beneath the scientific dataset skills. |
-| **write-readable-markdown** | Rewriting reports and READMEs as short, figure-led narratives with a one-paragraph interpretation; keeps AI handoffs operationally precise. |
+| **cluster-jobs** | Submitting, monitoring, interpreting and collecting SLURM batch jobs from a repo's `jobs/` directory — runner vs submitter, per-account runners, `INPUT_DIRS`/`LATEST:` resolution, PROBE timing runs, `finished_utc`, and the traps that kill a job in four seconds. Sits on top of **lcicm-cluster**. |
+| **plain-words** | Every human-facing output: replies back to you as well as reports and READMEs. Result first, short sentences, compact tables, figure-led narrative, a one-paragraph interpretation; keeps AI handoffs operationally precise. |
 
 Each skill is a directory under `skills/` containing a `SKILL.md` with YAML frontmatter
 (`name`, `description`); some bundle helper files. Claude auto-loads the relevant one based
 on the `description`.
 
-## Install (symlink into your Claude skills dir)
+## Install (symlink into your Claude and Codex skills dirs)
 
-Skills must live in `~/.claude/skills/` (or a project's `.claude/skills/`) to be picked
-up. This repo stays the single source of truth; `install.sh` symlinks each skill into
-your skills directory:
+Skills must live in `~/.claude/skills/` (or a project's `.claude/skills/`) for Claude Code,
+and `~/.codex/skills/` for Codex. Both tools select a skill from the same `SKILL.md`
+frontmatter. This repo stays the single source of truth; `install.sh` symlinks each skill
+into **both** directories:
 
 ```bash
 git clone https://github.com/michelraskin/icu_analysis_skills.git
@@ -37,16 +39,18 @@ cd icu_analysis_skills
 ./install.sh
 ```
 
-This creates symlinks like `~/.claude/skills/eicu-dataset -> .../icu_analysis_skills/skills/eicu-dataset`.
-Re-run after pulling updates (it's idempotent). To install elsewhere, set
-`CLAUDE_SKILLS_DIR` (e.g. project-local):
+This creates symlinks like `~/.claude/skills/eicu-dataset -> .../icu_analysis_skills/skills/eicu-dataset`
+and the matching `~/.codex/skills/eicu-dataset`. Re-run after pulling updates — it is idempotent,
+and it prunes links left dangling by a renamed skill. Override either destination, or set one to
+an empty string to skip that tool:
 
 ```bash
-CLAUDE_SKILLS_DIR=/path/to/project/.claude/skills ./install.sh
+CLAUDE_SKILLS_DIR=/path/to/project/.claude/skills ./install.sh   # project-local Claude install
+CODEX_SKILLS_DIR= ./install.sh                                   # Claude only
 ```
 
-To uninstall, remove the symlinks:
-`rm ~/.claude/skills/{clinical-icu-datasets,eicu-dataset,mimiciv-dataset,pmap-dataset,icu-feature-identification}`.
+To uninstall, remove the symlinks from both directories:
+`rm ~/.claude/skills/<name> ~/.codex/skills/<name>`.
 
 ## Updating the skills
 

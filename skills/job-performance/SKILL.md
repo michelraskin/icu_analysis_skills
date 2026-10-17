@@ -24,6 +24,7 @@ in the run manifest, or the job is not done.
 | 8 | Progress lines with a stable prefix every K units: `[job] <i>/<n> elapsed=<s> rate=<units/s> rss_max=<MB>`; a final line with `wall`, `cpu_seconds`, `utilisation = cpu_seconds / (wall × workers)` | the number that tells a reviewer the parallelism worked |
 | 9 | Fail fast, never fall back silently: if a requested GPU or core count is unavailable, raise | a silent CPU fallback burns hours and misreports |
 | 10 | Record `workers`, `threads_per_worker`, `cpu_count`, `peak_rss_mb`, `wall_seconds`, `cpu_seconds`, `utilisation`, `device` in the run manifest | provenance of the allocation, not just of the code |
+| 11 | **Every job ships with a profiler**: a `--profile` flag or a sibling `scripts/profile_<job>.py` that reports per-stage time per unit (data wait, host→device copy, compute, validation/write) and throughput at several worker counts, plus a verdict line (`loader-bound: X % waiting on data` or `compute-bound`); GPU jobs also sample `nvidia-smi` utilisation into the log every N minutes and document the live check `srun --jobid=<id> --overlap nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv -l 5` | a slow job with no profile costs days before anyone notices (a 2026-10 training campaign lost three designs to a wall-time limit at 0.45 s/batch on a T4 that should run at 0.05 s); a delegate's job is not done until the profile has been run once on the largest unit |
 
 ## Sizing procedure
 
@@ -118,3 +119,4 @@ threads each; CPU-only stages may use all 32.
 | final utilisation line ≥ 0.7 | in the log and the manifest |
 | smoke mode exists and finishes in < 2 min | run in the report |
 | fails, not falls back, when the allocation is missing | test or log line |
+| profiler exists and was run once on the largest unit | the per-stage table and verdict line in the report; README says how to run it |

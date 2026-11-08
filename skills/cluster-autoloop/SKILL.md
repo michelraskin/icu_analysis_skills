@@ -79,6 +79,22 @@ the owner has not seen.
 | finish | cron | auto-zip committed at the quiet point |
 | analyse | assistant | round row in STATUS, figure, ideas log; the owner reviews and picks the next round |
 
+## Lessons from the first day (2026-11-08)
+
+| what broke | why | the rule now |
+|---|---|---|
+| `scrontab` and `crontab` both refused | disabled by the site ("scrontab is disabled"; "not allowed to access crontab because of pam configuration") | a self-resubmitting SLURM job (`jobs/status_push_loop.sh`): each tick runs the snapshot and `sbatch --begin=now+N minutes` itself; a `STOP_LOOP` file ends it; a duplicate loop is refused by job name |
+| a five-hour gap between ticks | the tick is a `cpu` job and waits in the queue like any other | the interval is a floor, not a period; read `sacct` end times, not tick times, and never conclude "nothing finished" from a missing tick |
+| the queue's run logs never reached the repo | a global `*.log` rule in `.gitignore` | `!jobs/queue/done/*.log`; check `git check-ignore` on every machine-written path before trusting the push |
+| two queued chains died after their seed job | the campaign refused a checkout "2 commits behind origin" because the owner pushed during the tick | the queue pulls again right before each item and runs it with `ALLOW_STALE=1`; a chain that submits in stages must tolerate the repo moving under it |
+| rounds 2+ of every teacher lineage were invisible | `pseudo_chain.sh` wrote `chain.txt` only; the tracker read `chain.tsv` | every chain writes `chain.tsv`; the reader also parses `chain.txt`; a tracked-job set that is incomplete makes the quiet point wrong, not just the table |
+| one-off `sbatch_once` jobs (seed votes) were untracked | no chain folder | the tracker reads `jobs/queue/done/*.log` and `*.ids` and makes a synthetic chain per queue item |
+| `sbatch_once.sh` has no dry run | the queue preflight would have submitted for real | a queued one-off line starts with `[[ -z "${DRY_RUN:-}" ]] \|\| return 0 2>/dev/null \|\| exit 0` |
+| 44 "failures" in the first snapshot | the 7-day window counted long-known failures | `FAIL_WINDOW_HOURS=48` for Failures and ALERT; older ones are one summary line |
+| the Arms table could not show an arm's result | rows were per job | one row per arm name (rounds folded as `r1: a / b / c; r2: …`), mean Dice over finished students |
+
+Two design facts worth repeating: the snapshot is only as good as the set of tracked jobs, so every new submission path must register itself (a chain.tsv row or a queue log line), and the queue is paced (`QUEUE_MAX` items per tick), so a batch of nine items takes several ticks — the Queue section of the snapshot says what is still pending.
+
 ## Installing on a cluster
 
 | step | command |
@@ -86,7 +102,8 @@ the owner has not seen.
 | 1 | `echo 'export MAIL_USER=<address>' >> ~/.bashrc` |
 | 2 | one manual run: `RESULTS_ROOT=<root> bash jobs/status_push.sh; tail jobs/logs/status_push.log` — confirm a `cluster status …` commit reached the remote |
 | 3 | `scrontab -e`: `#SCRON --partition=cpu --time=00:45:00 --mem=4G --cpus-per-task=1 --job-name=status-push --output=/dev/null`, `#SCRON --open-mode=append`, `*/30 * * * * MAIL_USER=<address> RESULTS_ROOT=<root> bash /abs/path/repo/jobs/status_push.sh` |
-| if the SLURM job cannot push (no credentials or network on compute nodes) | the login-node `crontab -e` form of the same line, `>/dev/null 2>&1` |
+| if `scrontab` is disabled | the login-node `crontab -e` form of the same line, `>/dev/null 2>&1` |
+| if `crontab` is disabled too (our site) | `MAIL_USER=<address> RESULTS_ROOT=<root> sbatch jobs/status_push_loop.sh` once; `INTERVAL_MIN` (default 15) on the sbatch line; stop with `touch jobs/logs/STOP_LOOP`; check with `squeue -n da-topology-status-loop` (one PENDING tick with a start time ahead is healthy) |
 
 Use a clone that only the cron commits to, or accept that the owner's own pushes from the same
 clone go through the same `pull --ff-only` discipline.

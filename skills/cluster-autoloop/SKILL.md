@@ -93,6 +93,8 @@ the owner has not seen.
 | 44 "failures" in the first snapshot | the 7-day window counted long-known failures | `FAIL_WINDOW_HOURS=48` for Failures and ALERT; older ones are one summary line |
 | the Arms table could not show an arm's result | rows were per job | one row per arm name (rounds folded as `r1: a / b / c; r2: …`), mean Dice over finished students |
 
+Prefer `WHEN=after:<the item's own input jobs>` or `WHEN=now` over `WHEN=quiet`: a quiet point waits for every unrelated job too, and on 2026-11-08 five ready items sat idle for hours behind one running round. Keep `quiet` for genuine "after everything" items (a round summary). Auto-zip likewise runs on every new result (at most hourly), not only at quiet points.
+
 Two design facts worth repeating: the snapshot is only as good as the set of tracked jobs, so every new submission path must register itself (a chain.tsv row or a queue log line), and the queue is paced (`QUEUE_MAX` items per tick), so a batch of nine items takes several ticks — the Queue section of the snapshot says what is still pending.
 
 ## Installing on a cluster
@@ -117,3 +119,21 @@ clone go through the same `pull --ff-only` discipline.
 | the metrics reader matches the repo's own results table reader | the same Dice in both |
 | `zip_results.sh` prints a commit line and refuses parts over the repo limit | the auto-zip trusts that line |
 | the tests use a temporary git repository with a bare remote | the real repo's git state is never touched by a test |
+
+## Per-user scoping (added 2026-11-08, causal_sedation port)
+
+When two accounts share one repository and one cluster (here `mbranda1` and `mbaz1`, a teammate), one
+loop per account, and a loop never reads, writes or commits outside its own account's directories.
+
+| rule | mechanism |
+|---|---|
+| the user tag is the account | `USER_TAG=${LOOP_USER:-$(whoami)}`; the runs root resolves by whoami as the job scripts do |
+| every machine-written path is per user | `cluster_status/<user>/{STATUS_CLUSTER.md,jobs.tsv,ALERT,last_auto_zip.txt}`, `jobs/queue/<user>/{pending,done,STOP,env.sh}`, `results_archive/<user>/`, `jobs/logs/<user>/` |
+| the tracked set is one account's jobs | `sacct -u <user>`, `squeue -u <user>`, run manifests under that account's runs root only |
+| one loop per account | job name `a3-status-loop-<user>` (duplicate refusal by name); `MAIL_USER` per account |
+| commits name the account | `cluster status [<user>] <stamp>: r/p/f`, `auto-zip [<user>]: ...`, `queue [<user>]: ran <name>` |
+| two loops share one remote | `pull --ff-only`, one rebase retry; a loop never edits the other user's directory, so their commits never conflict |
+| shared facts stay shared | recipe lists and other non-path constants in `jobs/queue/env.common.sh`; run paths in the per-user `env.sh` |
+
+Tests: two fake users in one temporary repository; each loop commits only its own files, and one
+user's Failures never appear in the other's snapshot.

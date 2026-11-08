@@ -19,9 +19,13 @@ Tables carry the summary. Prose connects the tables. Bullet lists do neither wel
 | **numbered list** | an ordered procedure the reader will execute, in order | a bullet list of unordered points |
 | **bullet list** | nothing | — |
 
-Hard limits: paragraphs stop at three sentences, sentences at 25 words. Never run two paragraphs
+Hard limits: paragraphs stop at two sentences, sentences at 25 words. Never run two paragraphs
 back to back without a table, heading, or number between them. If a paragraph is growing, the
 content wanted a table.
+
+Replies to the user (2026-11-06, user: "less text, no paragraphs, maximum 2 sentences"): a reply is
+one table plus at most two sentences, or two sentences alone. Explanations go into table cells, not
+prose; a longer answer is written only when the user asks "explain" or "why" at length.
 
 ## Talking back to the user
 
@@ -127,7 +131,7 @@ presentation. They may be machine-oriented even when every other file is human-o
 | Main result stated in the first screen, or the first sentence | ✔ | ✔ |
 | Every number carries its population or comparison | ✔ | ✔ |
 | Summaries are tables, not bullet lists | ✔ | ✔ |
-| No paragraph over three sentences | ✔ | ✔ |
+| No paragraph over two sentences; a reply is one table plus two sentences at most | ✔ | ✔ |
 | Pending, failed or exploratory work labeled as such | ✔ | ✔ |
 | Figures match the text | ✔ | — |
 | Historical results visibly secondary | ✔ | — |

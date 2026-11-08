@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cluster Auto-loop"
+  short_description: "Mail, status snapshots, auto-zip and a submission queue through Git"
+  default_prompt: "Use $cluster-autoloop to set up the cron status push, the auto-zip and the submission queue for this repo's cluster jobs."

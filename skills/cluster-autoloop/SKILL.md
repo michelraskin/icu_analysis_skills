@@ -1,6 +1,6 @@
 ---
 name: cluster-autoloop
-description: "Closing the loop between a SLURM cluster and an assistant that cannot log in: SLURM e-mail on every sbatch (MAIL_USER / MAIL_TYPE through one shared helper), a 30-minute scrontab job that writes a status snapshot (every chain's job states, a Failures section with log tails, an ALERT file, the Dice of finished arms) and pushes it to the repository, an automatic results zip committed at quiet points, and a submission queue of chain lines in the repository that the cron dry-runs and runs once. Use when a lab repo needs runs to be monitored, archived, fixed and resubmitted without anyone pasting terminals, or when porting the pattern from domain_adaptation_topology to another repo. Pairs with cluster-jobs (how jobs are built) and lcicm-cluster (site facts)."
+description: "Closing the loop between a SLURM cluster and an assistant that cannot log in: SLURM e-mail on every sbatch (MAIL_USER / MAIL_TYPE through one shared helper), a 30-minute scrontab job that writes a status snapshot (every chain's job states, a Failures section with log tails, an ALERT file, the Dice of finished arms) and pushes it to the repository, an eager automatic results zip committed as results appear (no quiet point), and a submission queue of chain lines in the repository that the cron dry-runs and runs once. Use when a lab repo needs runs to be monitored, archived, fixed and resubmitted without anyone pasting terminals, or when porting the pattern from domain_adaptation_topology to another repo. Pairs with cluster-jobs (how jobs are built) and lcicm-cluster (site facts)."
 ---
 
 # Cluster auto-loop
@@ -19,12 +19,12 @@ Reference implementation: `domain_adaptation_topology` (`jobs/lib/mail_args.sh`,
 |---|---|---|---|
 | SLURM mail | every `sbatch` | `--mail-type=END,FAIL --mail-user=$MAIL_USER` on each job | `MAIL_USER` unset = silent; `MAIL_TYPE=FAIL` = failures only |
 | status snapshot | scrontab, every 30 min, login account | `cluster_status/STATUS_CLUSTER.md` + `jobs.tsv`, a `## Failures` section with the last 15 lines of each failed job's `.err` and the first Python error of its `.out`, `cluster_status/ALERT` while any tracked job failed | always on |
-| auto-zip | same cron, at a quiet point | the repo's `zip_results.sh` bundle copied into `results_archive/` and committed (each part ≤ 95 MB, GitHub's limit), marker `cluster_status/last_auto_zip.txt` | `AUTO_ZIP=0` |
-| submission queue | same cron | `jobs/queue/pending/<stamp>_<name>.sh` → dry-run preflight → real run → `jobs/queue/done/<name>.{log,ids}` → commit `queue: ran <name>` | `QUEUE=0`, a tracked `jobs/queue/STOP` file, `QUEUE_MAX=2` per cycle |
+| auto-zip | same cron, EAGER (since 2026-11-08; no quiet point) | per run, a results-only zip whenever its result files changed (≤ 1 per 30 min) and a full zip with logs once the run is idle, copied into `results_archive/` and committed (each ≤ 95 MB, GitHub's limit), state `cluster_status/<user>/zip_state.json` | `AUTO_ZIP=0`, `ZIP_MIN_INTERVAL_MIN` |
+| submission queue | same cron | `jobs/queue/pending/<stamp>_<name>.sh` → dry-run preflight → real run → `jobs/queue/done/<name>.{log,ids}` → commit `queue: ran <name>` | `QUEUE=0`, a tracked `jobs/queue/STOP` file, `QUEUE_MAX=6` per cycle |
 
-A quiet point is: no job of any tracked chain is RUNNING or PENDING, and at least one tracked job
-ended after the newest archive's stamp. Tracked chains are the `jobs/runs/*/chain.tsv` written in
-the last 7 days; the owner's unrelated jobs (dashboards, editors) never block a quiet point.
+There is no global quiet point any more (retired 2026-11-08, see "Eager zips and per-run idle"
+below). Tracked chains are the `jobs/runs/*/chain.tsv` (or run manifests) written in the last 7 days;
+the owner's unrelated jobs (dashboards, editors) never count against a run.
 
 ## Mail through one helper
 
@@ -59,8 +59,10 @@ folders, hint strings, student words; never secrets).
 | header | meaning |
 |---|---|
 | `# WHEN=now` | run in the next cycle |
-| `# WHEN=quiet` | run when the tracked chains are all finished (one quiet item per cycle) |
 | `# WHEN=after:<id>[,<id>]` | run when every listed job is terminal per `sacct` |
+| `# WHEN=after:<item name>` | run when that earlier queue item has run and every id in its `done/<name>.ids` is terminal |
+| `# WHEN=idle:<run>` | run when no tracked job of that run (a run directory or an `env.sh` variable name such as `RUN2`) is RUNNING or PENDING; different runs in one cycle, the same run one per cycle |
+| `# WHEN=quiet` | RETIRED: runs as `now` |
 | `# NOTE=<one line>` | shown in the status snapshot |
 
 Safety comes from the chains' own `DRY_RUN=1` preflights, not from parsing the lines: a refused
@@ -76,7 +78,7 @@ the owner has not seen.
 | monitor and notify | cron | snapshot commit every 30 min, mail per job |
 | fail | cron | `## Failures` + `ALERT` in the next commit |
 | fix | assistant | pull, read the log tail, fix, push, queue the resubmission with `WHEN=after:` or `now` |
-| finish | cron | auto-zip committed at the quiet point |
+| finish | cron | eager auto-zip committed as the results appear (full zip when the run is idle) |
 | analyse | assistant | round row in STATUS, figure, ideas log; the owner reviews and picks the next round |
 
 ## Lessons from the first day (2026-11-08)
@@ -93,7 +95,9 @@ the owner has not seen.
 | 44 "failures" in the first snapshot | the 7-day window counted long-known failures | `FAIL_WINDOW_HOURS=48` for Failures and ALERT; older ones are one summary line |
 | the Arms table could not show an arm's result | rows were per job | one row per arm name (rounds folded as `r1: a / b / c; r2: …`), mean Dice over finished students |
 
-Prefer `WHEN=after:<the item's own input jobs>` or `WHEN=now` over `WHEN=quiet`: a quiet point waits for every unrelated job too, and on 2026-11-08 five ready items sat idle for hours behind one running round. Keep `quiet` for genuine "after everything" items (a round summary). Auto-zip likewise runs on every new result (at most hourly), not only at quiet points.
+A self-resubmitting tick can die before it resubmits (2026-11-09: a tick FAILED after 5 s on its node and the loop stopped for an hour). Each tick therefore also submits a watchdog job three intervals out; the next tick cancels it, and if no tick is queued when the watchdog starts, it restarts the loop.
+
+Prefer `WHEN=after:<the item's own input jobs>`, `after:<item name>`, `idle:<run>` or `WHEN=now` over a global wait: a quiet point waits for every unrelated job too, and on 2026-11-08 five ready items sat idle for hours behind one running round. `quiet` no longer waits (it runs as `now`). Auto-zip likewise runs on every new result, not only at quiet points.
 
 Two design facts worth repeating: the snapshot is only as good as the set of tracked jobs, so every new submission path must register itself (a chain.tsv row or a queue log line), and the queue is paced (`QUEUE_MAX` items per tick), so a batch of nine items takes several ticks — the Queue section of the snapshot says what is still pending.
 
@@ -128,7 +132,7 @@ loop per account, and a loop never reads, writes or commits outside its own acco
 | rule | mechanism |
 |---|---|
 | the user tag is the account | `USER_TAG=${LOOP_USER:-$(whoami)}`; the runs root resolves by whoami as the job scripts do |
-| every machine-written path is per user | `cluster_status/<user>/{STATUS_CLUSTER.md,jobs.tsv,ALERT,last_auto_zip.txt}`, `jobs/queue/<user>/{pending,done,STOP,env.sh}`, `results_archive/<user>/`, `jobs/logs/<user>/` |
+| every machine-written path is per user | `cluster_status/<user>/{STATUS_CLUSTER.md,jobs.tsv,ALERT,zip_state.json,auto_zip_status.txt,queue_skip.txt}`, `jobs/queue/<user>/{pending,done,STOP,env.sh}`, `results_archive/<user>/`, `jobs/logs/<user>/` |
 | the tracked set is one account's jobs | `sacct -u <user>`, `squeue -u <user>`, run manifests under that account's runs root only |
 | one loop per account | job name `a3-status-loop-<user>` (duplicate refusal by name); `MAIL_USER` per account |
 | commits name the account | `cluster status [<user>] <stamp>: r/p/f`, `auto-zip [<user>]: ...`, `queue [<user>]: ran <name>` |
@@ -137,3 +141,25 @@ loop per account, and a loop never reads, writes or commits outside its own acco
 
 Tests: two fake users in one temporary repository; each loop commits only its own files, and one
 user's Failures never appear in the other's snapshot.
+
+## Eager zips and per-run idle (2026-11-08)
+
+Asked by the project lead the same day: "zip immediately as new results are done, queue whenever possible", then "no quiet point rule, just run when we can so we utilise the cluster".
+
+**Why.** A global quiet point (no job of the user RUNNING or PENDING) almost never occurs when several long chains run at once, so `WHEN=quiet` items waited for days and the auto-zip archived nothing. The old rule protected nothing: each item already depends on its own inputs.
+
+| rule | mechanism |
+|---|---|
+| nothing waits for a global quiet point | `WHEN=quiet` is retired: treated as `now`, logged, and noted in the snapshot's Queue section |
+| an item waits only for what it reads | `after:<ids>`, `after:<item name>` (the named item has run and all its `.ids` are terminal), `idle:<run>` (no tracked job of that run is RUNNING or PENDING; a run directory or an `env.sh` variable name such as `RUN2`) |
+| several ready items per tick | `QUEUE_MAX` default 6; SLURM and each chain's `MAX_CPUS` throttle the cluster |
+| different runs together, the same run in turn | idle items for different runs go out in one cycle; a run that got a job this cycle is busy for the `idle:` items behind it (the next cycle sees the new job ids) |
+| a job belongs to a run through its manifest or the queue item that submitted it | `RESUME_RUN=$RUN2`, `RUN=$RUN2` or `idle:RUN2` in the item; a hand-submitted job that is still PENDING and in no manifest is not counted |
+| the snapshot says why an item waits | Queue table column "Runs next cycle?": `RUN2 busy: 74 running`, `waiting for 7433407 running`, `<item> has not run yet`, `already ran` |
+| results-only zip as results change | per run, hash of the result files (csv, md, json, png under `<run>/pooled/`, no unit / cache / plan folders, no logs) plus mtimes in `zip_state.json`; at most once per `ZIP_MIN_INTERVAL_MIN` (30); fixed name `<tree>_h<H>_<stamp>.zip`, overwritten, so the history keeps one blob per change |
+| full zip with logs at the idle point | once per idle period of the run, `<name>_full.zip` via `jobs/zip_pooled_cv.sh` |
+| a zip over 95 MB is not committed | the status table says so; no retry until the files change |
+| an item runs once | skipped when `done/<name>.ids` (or `.sh`, `.log`) exists in the working tree or in the remote's `done/` |
+| a lost queue commit heals itself | each tick first commits leftover `jobs/queue/<user>/` moves and logs (`queue [<user>]: recover ...`); the dirty-tree rule ignores the user's own queue, status and archive paths and names the offending paths in `queue_skip.txt`; commits that never reached the remote are pushed by the next tick |
+
+Lesson behind the last row: on 2026-11-08 an item ran but its commit never reached the remote and the queue then stood still for hours because a rule meant for foreign edits blocked the loop's own leftovers. Treat the loop's own directories as its own, and make the reason for any skipped tick visible in the snapshot.

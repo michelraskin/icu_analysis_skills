@@ -95,7 +95,7 @@ the owner has not seen.
 | 44 "failures" in the first snapshot | the 7-day window counted long-known failures | `FAIL_WINDOW_HOURS=48` for Failures and ALERT; older ones are one summary line |
 | the Arms table could not show an arm's result | rows were per job | one row per arm name (rounds folded as `r1: a / b / c; r2: …`), mean Dice over finished students |
 
-A self-resubmitting tick can die before it resubmits (2026-11-09: a tick FAILED after 5 s on its node and the loop stopped for an hour). Each tick therefore also submits a watchdog job three intervals out; the next tick cancels it, and if no tick is queued when the watchdog starts, it restarts the loop.
+A self-resubmitting tick can die before it resubmits (2026-11-09: a tick FAILED after 5 s on its node and the loop stopped for an hour). Each tick therefore also submits a watchdog job three intervals out; the next tick cancels it, and if no tick is queued when the watchdog starts, it restarts the loop. Submit the successor and the fresh watchdog at the START of the tick, before any work: a tick killed at its time limit after it had cancelled the old watchdog left nothing behind (2026-11-09). Never run long housekeeping (copies, moves) inside the tick; submit it as its own one-at-a-time job.
 
 Prefer `WHEN=after:<the item's own input jobs>`, `after:<item name>`, `idle:<run>` or `WHEN=now` over a global wait: a quiet point waits for every unrelated job too, and on 2026-11-08 five ready items sat idle for hours behind one running round. `quiet` no longer waits (it runs as `now`). Auto-zip likewise runs on every new result, not only at quiet points.
 
